@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MBE 外延结构管理</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="app-title">
+          <div>
+            <h1>MBE 外延结构</h1>
+            <span id="dbStatus">本地 SQLite</span>
+          </div>
+          <button id="newWaferBtn" class="icon-btn primary" title="新建外延片">+</button>
+        </div>
+
+        <div class="sidebar-actions">
+          <input id="searchInput" type="search" placeholder="搜索片号 / 结构" />
+          <button id="importExcelBtn">导入片号N*.xlsx</button>
+        </div>
+
+        <div id="waferList" class="wafer-list"></div>
+      </aside>
+
+      <main class="editor">
+        <section class="wafer-header">
+          <label>
+            <span>片号</span>
+            <input data-wafer-field="wafer_code" id="waferCode" />
+          </label>
+          <label>
+            <span>尺寸</span>
+            <input data-wafer-field="size" id="waferSize" />
+          </label>
+          <label class="wide">
+            <span>结构名称</span>
+            <input data-wafer-field="structure_name" id="structureName" />
+          </label>
+          <label>
+            <span>日期</span>
+            <input data-wafer-field="growth_date" id="growthDate" type="date" />
+          </label>
+          <label class="wide notes">
+            <span>备注</span>
+            <input data-wafer-field="notes" id="waferNotes" />
+          </label>
+        </section>
+
+        <section class="toolbar">
+          <div class="tool-group">
+            <button data-action="add-layer">+ 层</button>
+            <button data-action="add-repeat">+ 重复块</button>
+            <button data-action="add-child">+ 子层</button>
+          </div>
+          <div class="tool-group">
+            <button data-action="copy-item">复制</button>
+            <button data-action="paste-item">粘贴</button>
+            <button data-action="duplicate-wafer">复制整片</button>
+          </div>
+          <div class="tool-group">
+            <button data-action="export-json">JSON</button>
+            <button data-action="export-csv">CSV</button>
+          </div>
+          <span id="statusText" class="status-text"></span>
+        </section>
+
+        <section class="table-wrap">
+          <table class="layer-table">
+            <thead>
+              <tr>
+                <th class="actions-col"></th>
+                <th>类型</th>
+                <th>层名</th>
+                <th>材料结构</th>
+                <th>厚度 nm</th>
+                <th>周期</th>
+                <th>单周期 nm</th>
+                <th>掺杂浓度</th>
+                <th>生长温度</th>
+                <th>QD</th>
+                <th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="layerTableBody"></tbody>
+          </table>
+        </section>
+
+        <section class="shortcuts">
+          <div class="section-title">
+            <h2>快捷键</h2>
+            <button id="resetShortcutsBtn">重置</button>
+          </div>
+          <div id="shortcutList" class="shortcut-grid"></div>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <section class="visual-panel">
+          <div class="section-title">
+            <h2>结构图</h2>
+            <span id="totalThickness">0 nm</span>
+          </div>
+          <div id="stackVisual" class="stack-visual"></div>
+        </section>
+
+        <section class="stats-panel">
+          <div class="section-title">
+            <h2>统计</h2>
+          </div>
+          <div id="statsContent" class="stats-content"></div>
+        </section>
+      </aside>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+
