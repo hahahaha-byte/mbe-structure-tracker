@@ -188,7 +188,7 @@ function renderItemRow(item, depth, map) {
     : `<input data-field="material" value="${escapeAttr(item.material)}" />`;
   const thicknessCell = repeat
     ? lockedCell("重复层厚度由周期和内部层自动计算", `自动 ${formatNumber(computed.thickness)}`)
-    : `<input data-field="thickness_nm" value="${escapeAttr(blankNumber(item.thickness_nm))}" />`;
+    : `<input data-field="thickness_nm" class="${item.is_quantum_dot ? "qd-growth-input" : ""}" value="${escapeAttr(blankNumber(item.thickness_nm))}" placeholder="${item.is_quantum_dot ? "如 2.3ML" : "nm"}" />`;
   const singlePeriodCell = hasNestedRows
     ? lockedCell("单周期厚度由内部层自动相加", `自动 ${formatNumber(periodThickness)}`)
     : repeat
@@ -311,11 +311,19 @@ function handleItemInput(event) {
   const wasRepeat = isRepeatItem(item, map);
   const field = input.dataset.field;
   item[field] = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  if (field === "is_quantum_dot") {
+    if (item.is_quantum_dot && ["", "0", "0.0"].includes(String(item.thickness_nm ?? "").trim())) {
+      item.thickness_nm = "";
+    }
+    if (!item.is_quantum_dot && !isNumericText(item.thickness_nm)) {
+      item.thickness_nm = "";
+    }
+  }
   normalizeRepeatState(item, map);
   state.selectedItemId = id;
   scheduleItemSave(item);
   renderInspector();
-  if (field === "periods" && wasRepeat !== isRepeatItem(item, map)) {
+  if ((field === "periods" && wasRepeat !== isRepeatItem(item, map)) || field === "is_quantum_dot") {
     renderItems();
   }
 }
@@ -673,35 +681,86 @@ function renderStack(map) {
     els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
     return;
   }
-  els.stackVisual.innerHTML = roots
-    .map((item, index) => {
-      const computed = computeItem(item, map);
-      const repeat = isRepeatItem(item, map);
-      const qdLike = item.is_quantum_dot || /(^|\s)(QD|quantum dot)|量子点/i.test(`${item.layer_name} ${item.material}`);
-      const color = materialColor(item.material || item.layer_name || String(index));
-      const flex = Math.max(computed.thickness, qdLike ? 0.08 : 0.02);
-      return `
-        <div class="stack-segment ${repeat ? "repeat" : ""} ${hasDoping(item) ? "doped" : ""} ${qdLike ? "qd" : ""}"
-          style="flex-grow:${flex}; background-color:${color}">
-          <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
-          <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map))}</div>
-        </div>
-      `;
-    })
-    .join("");
+  els.stackVisual.innerHTML = renderStackItems(roots, map, 0);
 }
 
-function stackMeta(item, computed, map) {
+function renderStackItems(items, map, depth) {
+  const parts = [];
+  let pendingQd = [];
+  items.forEach((item, index) => {
+    if (!isRepeatItem(item, map) && isQuantumDot(item)) {
+      pendingQd.push(item);
+      return;
+    }
+    parts.push(renderStackSegment(item, map, depth, pendingQd, index));
+    pendingQd = [];
+  });
+  pendingQd.forEach((item) => {
+    parts.push(renderQdMarker(item, depth));
+  });
+  return parts.join("");
+}
+
+function renderStackSegment(item, map, depth, qdMarkers, index) {
+  const computed = computeItem(item, map);
+  const repeat = isRepeatItem(item, map);
+  const children = map.get(item.id) || [];
+  const hasChildren = repeat && children.length > 0;
+  const qdCap = qdMarkers.length > 0;
+  const color = materialColor(item.material || item.layer_name || String(index));
+  const flex = visualFlex(computed.thickness);
+  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1) : "";
+  const classes = [
+    "stack-segment",
+    repeat ? "repeat" : "",
+    hasChildren ? "with-children" : "",
+    hasDoping(item) ? "doped" : "",
+    qdCap ? "qd-cap" : "",
+    computed.thickness > 0 && computed.thickness < 30 ? "thin-layer" : ""
+  ].filter(Boolean).join(" ");
+  return `
+    <div class="${classes}" style="flex-grow:${flex}; background-color:${color}; --stack-depth:${depth}">
+      <div class="segment-header">
+        <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
+        <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, qdMarkers))}</div>
+      </div>
+      ${qdCap ? renderQdDots(qdMarkers) : ""}
+      ${hasChildren ? `<div class="repeat-children">${childHtml}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderQdDots(items) {
+  const label = items.map((item) => qdGrowthText(item)).filter(Boolean).join(" + ");
+  return `<div class="qd-dots" title="${escapeAttr(label ? `QD ${label}` : "QD")}"></div>`;
+}
+
+function renderQdMarker(item, depth) {
+  const color = materialColor(item.material || item.layer_name || "QD");
+  return `
+    <div class="stack-segment qd-marker" style="flex-grow:0.2; background-color:${color}; --stack-depth:${depth}">
+      <div class="qd-dots"></div>
+      <div class="segment-header">
+        <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
+        <div class="segment-meta">${escapeHtml(stackMeta(item, { thickness: 0 }, new Map()))}</div>
+      </div>
+    </div>
+  `;
+}
+
+function stackMeta(item, computed, map, qdMarkers = []) {
   const material = item.material || "";
   const thickness = `${formatNumber(computed.thickness)} nm`;
+  const qdText = qdMarkers.length ? ` · QD ${qdMarkers.map(qdGrowthText).filter(Boolean).join(" + ") || "标记"}` : "";
   if (isRepeatItem(item, map)) {
     const childCount = (map.get(item.id) || []).length;
-    return `${item.periods || 1}x · ${childCount ? `${childCount} 内部层 · ` : material ? `${material} · ` : ""}${thickness}`;
+    return `${item.periods || 1}x · ${childCount ? `${childCount} 内部层 · ` : material ? `${material} · ` : ""}${thickness}${qdText}`;
   }
-  if (item.is_quantum_dot) {
-    return `${material} · 显示 / 不计厚度`;
+  if (isQuantumDot(item)) {
+    const growth = qdGrowthText(item);
+    return `${material}${growth ? ` · ${growth}` : ""} · 不计厚度`;
   }
-  return `${material} · ${thickness}`;
+  return `${material} · ${thickness}${qdText}`;
 }
 
 function renderStats(stats) {
@@ -780,9 +839,25 @@ function computeItem(item, map, stats = null, multiplier = 1) {
   }
   if (stats) stats.layerCount += 1;
   const visible = numberValue(item.thickness_nm);
-  const effective = item.is_quantum_dot ? 0 : visible;
+  const effective = isQuantumDot(item) ? 0 : visible;
   addMaterial(stats, item.material, effective * multiplier);
   return { thickness: effective };
+}
+
+function isQuantumDot(item) {
+  return Boolean(item.is_quantum_dot) || /(^|\s)(QD|quantum dot)|量子点/i.test(`${item.layer_name} ${item.material}`);
+}
+
+function qdGrowthText(item) {
+  const value = String(item.thickness_nm ?? "").trim();
+  if (!value || value === "0" || value === "0.0") return "";
+  return value;
+}
+
+function visualFlex(thickness) {
+  const value = numberValue(thickness);
+  if (value <= 0) return 0.2;
+  return Math.max(value, 30);
 }
 
 function sumThickness(items, map) {
@@ -934,6 +1009,11 @@ function numberValue(value) {
   if (value === null || value === undefined || value === "") return 0;
   const parsed = Number(String(value).replace(/,/g, ""));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isNumericText(value) {
+  if (value === null || value === undefined || value === "") return true;
+  return Number.isFinite(Number(String(value).replace(/,/g, "")));
 }
 
 function blankNumber(value) {

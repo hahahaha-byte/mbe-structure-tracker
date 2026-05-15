@@ -144,6 +144,7 @@ def normalize_doping(value: Any) -> str:
 
 def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base = dict(existing or {})
+    qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
     for field in ITEM_FIELDS:
         if field not in data:
             continue
@@ -151,7 +152,10 @@ def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None
         if field in TEXT_ITEM_FIELDS:
             base[field] = clean_text(value)
         elif field in FLOAT_ITEM_FIELDS:
-            base[field] = clean_float(value)
+            if field == "thickness_nm" and qd_requested:
+                base[field] = clean_text(value)
+            else:
+                base[field] = clean_float(value)
         elif field in INT_ITEM_FIELDS:
             base[field] = clean_int(value)
     base["item_type"] = base.get("item_type") if base.get("item_type") in {"layer", "repeat"} else "layer"
