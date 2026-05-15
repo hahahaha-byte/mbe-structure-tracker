@@ -415,7 +415,9 @@ def restore_item_tree(conn: sqlite3.Connection, wafer_id: int, tree: Dict[str, A
     max_order = next_order(conn, wafer_id, parent_id)
     order_index = requested_order if requested_order is not None and requested_order <= max_order else max_order
     shift_siblings(conn, wafer_id, parent_id, order_index)
-    restored = insert_tree_from_payload(conn, wafer_id, tree, parent_id, order_index)
+    id_map: Dict[int, int] = {}
+    restored = insert_tree_from_payload(conn, wafer_id, tree, parent_id, order_index, id_map)
+    restored["_id_map"] = id_map
     normalize_order(conn, wafer_id, parent_id)
     touch_wafer(conn, wafer_id)
     return restored
@@ -427,6 +429,7 @@ def insert_tree_from_payload(
     payload: Dict[str, Any],
     parent_id: Optional[int],
     order_index: int,
+    id_map: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Any]:
     item = normalize_item_payload(payload)
     now = utc_now()
@@ -458,8 +461,11 @@ def insert_tree_from_payload(
         ),
     )
     new_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    old_id = clean_int(payload.get("id"))
+    if id_map is not None and old_id is not None:
+        id_map[old_id] = new_id
     for child_index, child in enumerate(payload.get("children", [])):
-        insert_tree_from_payload(conn, wafer_id, child, new_id, child_index)
+        insert_tree_from_payload(conn, wafer_id, child, new_id, child_index, id_map)
     return row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (new_id,)).fetchone())
 
 

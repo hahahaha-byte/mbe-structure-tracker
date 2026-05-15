@@ -3,7 +3,7 @@ const state = {
   current: null,
   selectedItemId: null,
   copiedItemId: null,
-  lastDeleted: null,
+  undoHistory: new Map(),
   collapsedItemIds: new Set(),
   shortcuts: [],
   saveTimers: new Map(),
@@ -226,7 +226,7 @@ async function handleToolbarClick(event) {
   try {
     if (action === "add-layer") await addLayer();
     if (action === "add-inner-layer") await addInnerLayer();
-    if (action === "undo-delete") await undoDelete();
+    if (action === "undo-delete") await undoLastStep();
     if (action === "copy-item") copySelectedItem();
     if (action === "paste-item") await pasteItem();
     if (action === "duplicate-wafer") await duplicateCurrentWafer();
@@ -409,36 +409,81 @@ async function addInnerLayer() {
 async function deleteSelectedItem(id) {
   const payload = await api(`/api/items/${id}`, { method: "DELETE" });
   if (payload.deleted) {
-    state.lastDeleted = {
+    pushUndoStep({
+      type: "delete",
       waferId: state.current.id,
       tree: payload.deleted,
       label: payload.deleted.layer_name || payload.deleted.material || "层"
-    };
+    });
   }
   state.selectedItemId = null;
   updateUndoButton();
   await loadWafer(state.current.id);
-  showStatus("已删除，可撤回");
+  showStatus("已删除，可撤回上一步");
 }
 
-async function undoDelete() {
-  if (!state.lastDeleted || !state.current || state.lastDeleted.waferId !== state.current.id) return;
+async function undoLastStep() {
+  const stack = currentUndoStack();
+  const step = stack.pop();
+  if (!step || !state.current || step.waferId !== state.current.id) {
+    updateUndoButton();
+    return;
+  }
+  if (step.type !== "delete") {
+    updateUndoButton();
+    return;
+  }
   const payload = await api(`/api/wafers/${state.current.id}/restore`, {
     method: "POST",
-    body: JSON.stringify({ tree: state.lastDeleted.tree })
+    body: JSON.stringify({ tree: step.tree })
   });
   state.selectedItemId = payload.item.id;
-  state.lastDeleted = null;
+  remapPendingUndoParents(payload.id_map || {});
   updateUndoButton();
   await loadWafer(state.current.id);
-  showStatus("已撤回");
+  showStatus(stack.length ? `已撤回，还可撤回 ${stack.length} 步` : "已撤回");
 }
 
 function updateUndoButton() {
   if (!els.undoDeleteBtn) return;
-  const active = state.current && state.lastDeleted && state.lastDeleted.waferId === state.current.id;
+  const stack = currentUndoStack(false);
+  const step = stack[stack.length - 1];
+  const active = Boolean(state.current && step);
   els.undoDeleteBtn.disabled = !active;
-  els.undoDeleteBtn.textContent = active ? `撤回删除：${state.lastDeleted.label}` : "撤回删除";
+  els.undoDeleteBtn.textContent = active ? `撤回上一步（${stack.length}）：${step.label}` : "撤回上一步";
+}
+
+function currentUndoStack(create = true) {
+  if (!state.current) return [];
+  const waferId = state.current.id;
+  if (!state.undoHistory.has(waferId) && create) {
+    state.undoHistory.set(waferId, []);
+  }
+  return state.undoHistory.get(waferId) || [];
+}
+
+function pushUndoStep(step) {
+  const stack = currentUndoStack();
+  stack.push(step);
+  if (stack.length > 50) stack.shift();
+}
+
+function remapPendingUndoParents(idMap) {
+  const entries = Object.entries(idMap);
+  if (!entries.length) return;
+  const stack = currentUndoStack(false);
+  stack.forEach((step) => {
+    if (step.tree) remapTreeParentIds(step.tree, entries);
+  });
+}
+
+function remapTreeParentIds(tree, entries) {
+  entries.forEach(([oldId, newId]) => {
+    if (String(tree.parent_id) === String(oldId)) {
+      tree.parent_id = Number(newId);
+    }
+  });
+  (tree.children || []).forEach((child) => remapTreeParentIds(child, entries));
 }
 
 function copySelectedItem() {

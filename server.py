@@ -189,7 +189,8 @@ class MBEHandler(BaseHTTPRequestHandler):
                 return
             if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "wafers"] and parts[3] == "restore":
                 item = restore_item_tree(conn, int(parts[2]), body["tree"])
-                json_response(self, HTTPStatus.CREATED, {"item": item})
+                id_map = item.pop("_id_map", {})
+                json_response(self, HTTPStatus.CREATED, {"item": item, "id_map": id_map})
                 return
             if method == "POST" and parts == ["api", "import", "excel"]:
                 result = import_excel(conn, body)
