@@ -2,4 +2,4 @@ data/*.sqlite
 data/*.sqlite-*
 __pycache__/
 *.pyc
-
+.DS_Store

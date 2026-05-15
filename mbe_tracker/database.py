@@ -371,14 +371,29 @@ def update_item(conn: sqlite3.Connection, item_id: int, data: Dict[str, Any]) ->
     return row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (item_id,)).fetchone())
 
 
-def delete_item(conn: sqlite3.Connection, item_id: int) -> None:
+def item_tree(conn: sqlite3.Connection, item_id: int) -> Optional[Dict[str, Any]]:
     current = row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (item_id,)).fetchone())
     if not current:
-        return
+        return None
+    children = conn.execute(
+        "SELECT id FROM structure_item WHERE parent_id = ? ORDER BY order_index, id",
+        (item_id,),
+    ).fetchall()
+    current["children"] = [item_tree(conn, int(child["id"])) for child in children]
+    current["children"] = [child for child in current["children"] if child]
+    return current
+
+
+def delete_item(conn: sqlite3.Connection, item_id: int) -> Optional[Dict[str, Any]]:
+    current = row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (item_id,)).fetchone())
+    if not current:
+        return None
+    deleted = item_tree(conn, item_id)
     delete_item_children(conn, item_id)
     conn.execute("DELETE FROM structure_item WHERE id = ?", (item_id,))
     normalize_order(conn, int(current["wafer_id"]), current["parent_id"])
     touch_wafer(conn, int(current["wafer_id"]))
+    return deleted
 
 
 def delete_item_children(conn: sqlite3.Connection, item_id: int) -> None:
@@ -386,6 +401,66 @@ def delete_item_children(conn: sqlite3.Connection, item_id: int) -> None:
     for child in children:
         delete_item_children(conn, int(child["id"]))
         conn.execute("DELETE FROM structure_item WHERE id = ?", (int(child["id"]),))
+
+
+def restore_item_tree(conn: sqlite3.Connection, wafer_id: int, tree: Dict[str, Any]) -> Dict[str, Any]:
+    parent_id = clean_int(tree.get("parent_id"))
+    if parent_id and not conn.execute(
+        "SELECT 1 FROM structure_item WHERE id = ? AND wafer_id = ?",
+        (parent_id, wafer_id),
+    ).fetchone():
+        parent_id = None
+
+    requested_order = clean_int(tree.get("order_index"))
+    max_order = next_order(conn, wafer_id, parent_id)
+    order_index = requested_order if requested_order is not None and requested_order <= max_order else max_order
+    shift_siblings(conn, wafer_id, parent_id, order_index)
+    restored = insert_tree_from_payload(conn, wafer_id, tree, parent_id, order_index)
+    normalize_order(conn, wafer_id, parent_id)
+    touch_wafer(conn, wafer_id)
+    return restored
+
+
+def insert_tree_from_payload(
+    conn: sqlite3.Connection,
+    wafer_id: int,
+    payload: Dict[str, Any],
+    parent_id: Optional[int],
+    order_index: int,
+) -> Dict[str, Any]:
+    item = normalize_item_payload(payload)
+    now = utc_now()
+    conn.execute(
+        """
+        INSERT INTO structure_item (
+            wafer_id, parent_id, item_type, order_index, layer_name, material,
+            thickness_nm, periods, single_period_thickness_nm, doping,
+            growth_temp, notes, is_quantum_dot, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            wafer_id,
+            parent_id,
+            item["item_type"],
+            order_index,
+            item.get("layer_name", ""),
+            item.get("material", ""),
+            item.get("thickness_nm"),
+            item.get("periods"),
+            item.get("single_period_thickness_nm"),
+            item.get("doping", ""),
+            item.get("growth_temp", ""),
+            item.get("notes", ""),
+            item.get("is_quantum_dot", 0),
+            now,
+            now,
+        ),
+    )
+    new_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+    for child_index, child in enumerate(payload.get("children", [])):
+        insert_tree_from_payload(conn, wafer_id, child, new_id, child_index)
+    return row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (new_id,)).fetchone())
 
 
 def normalize_order(conn: sqlite3.Connection, wafer_id: int, parent_id: Optional[int]) -> None:

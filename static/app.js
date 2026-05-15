@@ -3,17 +3,20 @@ const state = {
   current: null,
   selectedItemId: null,
   copiedItemId: null,
+  lastDeleted: null,
+  collapsedItemIds: new Set(),
   shortcuts: [],
   saveTimers: new Map(),
   waferSaveTimer: null
 };
 
 const DEFAULT_SHORTCUTS = [
-  { key: "Alt+1", layer_name: "缓冲层", material: "GaAs buffer layer", thickness_nm: "500", doping: "2E18" },
-  { key: "Alt+2", layer_name: "限制层", material: "AlGaAs cladding layer", thickness_nm: "1800", doping: "2E18" },
-  { key: "Alt+3", layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", doping: "" },
-  { key: "Alt+4", layer_name: "有源区", material: "QD active layer", thickness_nm: "", doping: "Be-doping 10hole/dot" },
-  { key: "Alt+5", layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", doping: "1E19" }
+  { label: "GaAs", layer_name: "", material: "GaAs", thickness_nm: "", doping: "" },
+  { label: "AlGaAs", layer_name: "", material: "AlGaAs", thickness_nm: "", doping: "" },
+  { label: "接触层", layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", doping: "1E19" },
+  { label: "波导", layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", doping: "" },
+  { label: "Be", layer_name: "", material: "", thickness_nm: "", doping: "Be-doping 10hole/dot" },
+  { label: "Si", layer_name: "", material: "", thickness_nm: "", doping: "Si-doping" }
 ];
 
 const els = {};
@@ -25,6 +28,7 @@ async function init() {
   loadShortcuts();
   bindEvents();
   renderShortcuts();
+  updateUndoButton();
   await loadWafers();
 }
 
@@ -37,6 +41,7 @@ function bindElements() {
   els.totalThickness = document.getElementById("totalThickness");
   els.statusText = document.getElementById("statusText");
   els.shortcutList = document.getElementById("shortcutList");
+  els.undoDeleteBtn = document.getElementById("undoDeleteBtn");
   els.waferFields = {
     wafer_code: document.getElementById("waferCode"),
     size: document.getElementById("waferSize"),
@@ -49,6 +54,7 @@ function bindElements() {
 function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
   document.getElementById("importExcelBtn").addEventListener("click", importExcel);
+  document.getElementById("addShortcutBtn").addEventListener("click", addShortcut);
   document.getElementById("resetShortcutsBtn").addEventListener("click", resetShortcuts);
   els.searchInput.addEventListener("input", debounce(() => loadWafers(), 180));
 
@@ -58,7 +64,7 @@ function bindEvents() {
   els.layerTableBody.addEventListener("input", handleItemInput);
   els.layerTableBody.addEventListener("change", handleItemInput);
   els.shortcutList.addEventListener("input", handleShortcutInput);
-  document.addEventListener("keydown", handleShortcutKey);
+  els.shortcutList.addEventListener("click", handleShortcutClick);
 
   Object.values(els.waferFields).forEach((input) => {
     input.addEventListener("input", handleWaferInput);
@@ -139,6 +145,7 @@ function renderCurrent() {
   });
   renderItems();
   renderInspector();
+  updateUndoButton();
 }
 
 function renderItems() {
@@ -146,7 +153,8 @@ function renderItems() {
     els.layerTableBody.innerHTML = "";
     return;
   }
-  const rows = flattenItems();
+  const map = childMap();
+  const rows = flattenItems(null, 0, map);
   if (!rows.length) {
     els.layerTableBody.innerHTML = `
       <tr>
@@ -155,39 +163,51 @@ function renderItems() {
     `;
     return;
   }
-  els.layerTableBody.innerHTML = rows.map(({ item, depth }) => renderItemRow(item, depth)).join("");
+  els.layerTableBody.innerHTML = rows.map(({ item, depth }) => renderItemRow(item, depth, map)).join("");
 }
 
-function renderItemRow(item, depth) {
+function renderItemRow(item, depth, map) {
   const selected = item.id === state.selectedItemId ? "selected" : "";
-  const repeat = item.item_type === "repeat";
+  const children = map.get(item.id) || [];
+  const repeat = isRepeatItem(item, map);
   const child = depth > 0 ? "child-row" : "";
-  const computed = computeItem(item, childMap());
+  const expanded = isExpanded(item);
+  const computed = computeItem(item, map);
+  const periodThickness = children.length ? sumThickness(children, map) : numberValue(item.single_period_thickness_nm);
+  const hasNestedRows = children.length > 0;
+  const materialDisabled = repeat && hasNestedRows;
+  const singleDisabled = !repeat || hasNestedRows;
+  const dopingDisabled = repeat && hasNestedRows;
+  const qdDisabled = repeat && hasNestedRows;
+  const rowLabel = repeat ? "重复层" : depth > 0 ? "内部层" : "层";
+  const rowClass = repeat ? "repeat-row" : child;
   return `
-    <tr class="${selected} ${repeat ? "repeat-row" : ""} ${child}" data-id="${item.id}">
+    <tr class="${selected} ${rowClass} ${child}" data-id="${item.id}">
       <td>
         <div class="row-actions">
           <button data-action="select-row" title="选择">•</button>
+          <button data-action="toggle-expand" title="${expanded ? "收起" : "展开"}" ${repeat ? "" : "disabled"}>${repeat ? (expanded ? "▾" : "▸") : "·"}</button>
           <button data-action="move-up" title="上移">↑</button>
           <button data-action="move-down" title="下移">↓</button>
+          <button data-action="add-inner-row" title="添加内部层" ${repeat ? "" : "disabled"}>+</button>
           <button data-action="delete-item" title="删除">×</button>
         </div>
       </td>
-      <td><span class="type-badge ${repeat ? "repeat" : ""}">${repeat ? "重复" : "层"}</span></td>
+      <td><span class="type-badge ${repeat ? "repeat" : depth > 0 ? "inner" : ""}">${rowLabel}</span></td>
       <td>
         <div class="indent-cell" style="--indent:${9 + depth * 18}px">
           <input data-field="layer_name" value="${escapeAttr(item.layer_name)}" />
         </div>
       </td>
-      <td><input data-field="material" value="${escapeAttr(item.material)}" /></td>
+      <td>${materialDisabled ? `<span class="ghost-text">展开层里填写</span>` : `<input data-field="material" value="${escapeAttr(item.material)}" />`}</td>
       <td>
         <input data-field="thickness_nm" value="${repeat ? formatNumber(computed.thickness) : escapeAttr(blankNumber(item.thickness_nm))}" ${repeat ? "disabled" : ""} />
       </td>
-      <td><input data-field="periods" value="${escapeAttr(blankNumber(item.periods))}" ${repeat ? "" : "disabled"} /></td>
-      <td><input data-field="single_period_thickness_nm" value="${escapeAttr(blankNumber(item.single_period_thickness_nm))}" ${repeat ? "" : "disabled"} /></td>
-      <td><input data-field="doping" value="${escapeAttr(item.doping)}" /></td>
+      <td><input data-field="periods" value="${escapeAttr(blankNumber(item.periods))}" /></td>
+      <td><input data-field="single_period_thickness_nm" value="${repeat ? formatNumber(periodThickness) : escapeAttr(blankNumber(item.single_period_thickness_nm))}" ${singleDisabled ? "disabled" : ""} /></td>
+      <td>${dopingDisabled ? `<span class="ghost-text">展开层里填写</span>` : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`}</td>
       <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" /></td>
-      <td class="checkbox-cell"><input data-field="is_quantum_dot" type="checkbox" ${item.is_quantum_dot ? "checked" : ""} /></td>
+      <td class="checkbox-cell"><input data-field="is_quantum_dot" type="checkbox" ${item.is_quantum_dot ? "checked" : ""} ${qdDisabled ? "disabled" : ""} /></td>
       <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
     </tr>
   `;
@@ -204,9 +224,9 @@ async function handleToolbarClick(event) {
   if (!button || !state.current) return;
   const action = button.dataset.action;
   try {
-    if (action === "add-layer") await addItem("layer");
-    if (action === "add-repeat") await addItem("repeat");
-    if (action === "add-child") await addChildLayer();
+    if (action === "add-layer") await addLayer();
+    if (action === "add-inner-layer") await addInnerLayer();
+    if (action === "undo-delete") await undoDelete();
     if (action === "copy-item") copySelectedItem();
     if (action === "paste-item") await pasteItem();
     if (action === "duplicate-wafer") await duplicateCurrentWafer();
@@ -229,6 +249,14 @@ async function handleTableClick(event) {
   const action = actionButton.dataset.action;
   try {
     if (action === "select-row") selectItem(id);
+    if (action === "toggle-expand") {
+      toggleExpanded(id);
+      renderItems();
+    }
+    if (action === "add-inner-row") {
+      selectItem(id);
+      await addInnerLayer();
+    }
     if (action === "move-up" || action === "move-down") {
       await api(`/api/items/${id}/move`, {
         method: "POST",
@@ -237,9 +265,7 @@ async function handleTableClick(event) {
       await loadWafer(state.current.id);
     }
     if (action === "delete-item") {
-      await api(`/api/items/${id}`, { method: "DELETE" });
-      state.selectedItemId = null;
-      await loadWafer(state.current.id);
+      await deleteSelectedItem(id);
     }
   } catch (error) {
     showError(error);
@@ -253,11 +279,17 @@ function handleItemInput(event) {
   const id = Number(row.dataset.id);
   const item = state.current.items.find((candidate) => candidate.id === id);
   if (!item) return;
+  const map = childMap();
+  const wasRepeat = isRepeatItem(item, map);
   const field = input.dataset.field;
   item[field] = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  normalizeRepeatState(item, map);
   state.selectedItemId = id;
   scheduleItemSave(item);
   renderInspector();
+  if (field === "periods" && wasRepeat !== isRepeatItem(item, map)) {
+    renderItems();
+  }
 }
 
 function handleWaferInput(event) {
@@ -287,7 +319,7 @@ function scheduleItemSave(item) {
       try {
         await api(`/api/items/${item.id}`, {
           method: "PUT",
-          body: JSON.stringify(item)
+          body: JSON.stringify(itemPayload(item))
         });
         showStatus("已保存");
       } catch (error) {
@@ -312,43 +344,101 @@ async function createNewWafer() {
   }
 }
 
-async function addItem(itemType) {
+async function addLayer() {
   const selected = selectedItem();
-  const body = {
-    item_type: itemType,
-    after_id: selected?.parent_id ? selected.id : selected?.id,
-    layer_name: itemType === "repeat" ? "重复块" : "新层",
-    material: "",
-    thickness_nm: itemType === "layer" ? 0 : null,
-    periods: itemType === "repeat" ? 1 : null,
-    single_period_thickness_nm: itemType === "repeat" ? 0 : null
-  };
-  const payload = await api(`/api/wafers/${state.current.id}/items`, {
-    method: "POST",
-    body: JSON.stringify(body)
-  });
-  state.selectedItemId = payload.item.id;
-  await loadWafer(state.current.id);
-}
-
-async function addChildLayer() {
-  const parent = selectedItem();
-  if (!parent || parent.item_type !== "repeat") {
-    showStatus("先选择重复块");
-    return;
-  }
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
-      parent_id: parent.id,
       item_type: "layer",
-      layer_name: "子层",
+      after_id: selected?.id || null,
+      layer_name: "新层",
       material: "",
       thickness_nm: 0
     })
   });
   state.selectedItemId = payload.item.id;
   await loadWafer(state.current.id);
+}
+
+async function addInnerLayer() {
+  const selected = selectedItem();
+  const map = childMap();
+  let parent = selected && isRepeatItem(selected, map) ? selected : null;
+  let afterId = null;
+  if (!parent && selected?.parent_id) {
+    const maybeParent = state.current.items.find((item) => item.id === selected.parent_id);
+    if (maybeParent && isRepeatItem(maybeParent, map)) {
+      parent = maybeParent;
+      afterId = selected.id;
+    }
+  }
+  if (!parent && selected && numberValue(selected.periods) > 1) {
+    selected.item_type = "repeat";
+    selected.material = "";
+    selected.doping = "";
+    selected.thickness_nm = null;
+    scheduleItemSave(selected);
+    parent = selected;
+  }
+  if (!parent) {
+    showStatus("先选一层并填写周期 > 1");
+    return;
+  }
+  parent.material = "";
+  parent.doping = "";
+  parent.thickness_nm = null;
+  parent.single_period_thickness_nm = null;
+  parent.is_quantum_dot = 0;
+  scheduleItemSave(parent);
+  state.collapsedItemIds.delete(parent.id);
+  const payload = await api(`/api/wafers/${state.current.id}/items`, {
+    method: "POST",
+    body: JSON.stringify({
+      parent_id: parent.id,
+      after_id: afterId,
+      item_type: "layer",
+      layer_name: "内部层",
+      material: "",
+      thickness_nm: 0
+    })
+  });
+  state.selectedItemId = payload.item.id;
+  await loadWafer(state.current.id);
+}
+
+async function deleteSelectedItem(id) {
+  const payload = await api(`/api/items/${id}`, { method: "DELETE" });
+  if (payload.deleted) {
+    state.lastDeleted = {
+      waferId: state.current.id,
+      tree: payload.deleted,
+      label: payload.deleted.layer_name || payload.deleted.material || "层"
+    };
+  }
+  state.selectedItemId = null;
+  updateUndoButton();
+  await loadWafer(state.current.id);
+  showStatus("已删除，可撤回");
+}
+
+async function undoDelete() {
+  if (!state.lastDeleted || !state.current || state.lastDeleted.waferId !== state.current.id) return;
+  const payload = await api(`/api/wafers/${state.current.id}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ tree: state.lastDeleted.tree })
+  });
+  state.selectedItemId = payload.item.id;
+  state.lastDeleted = null;
+  updateUndoButton();
+  await loadWafer(state.current.id);
+  showStatus("已撤回");
+}
+
+function updateUndoButton() {
+  if (!els.undoDeleteBtn) return;
+  const active = state.current && state.lastDeleted && state.lastDeleted.waferId === state.current.id;
+  els.undoDeleteBtn.disabled = !active;
+  els.undoDeleteBtn.textContent = active ? `撤回删除：${state.lastDeleted.label}` : "撤回删除";
 }
 
 function copySelectedItem() {
@@ -367,13 +457,12 @@ async function pasteItem() {
     return;
   }
   const selected = selectedItem();
-  const body = {
-    source_item_id: state.copiedItemId,
-    after_id: selected?.id || null
-  };
   const payload = await api(`/api/wafers/${state.current.id}/paste`, {
     method: "POST",
-    body: JSON.stringify(body)
+    body: JSON.stringify({
+      source_item_id: state.copiedItemId,
+      after_id: selected?.id || null
+    })
   });
   state.selectedItemId = payload.item.id;
   await loadWafer(state.current.id);
@@ -397,9 +486,8 @@ async function importExcel() {
       method: "POST",
       body: JSON.stringify({})
     });
-    const count = payload.imported.length;
-    showStatus(`已导入 ${count} 个`);
-    await loadWafers(payload.imported[0]?.wafer_code ? null : state.current?.id);
+    showStatus(`已导入 ${payload.imported.length} 个`);
+    await loadWafers(state.current?.id || null);
   } catch (error) {
     showError(error);
   }
@@ -436,9 +524,53 @@ function flattenItems(parentId = null, depth = 0, map = childMap()) {
   const rows = [];
   (map.get(parentId) || []).forEach((item) => {
     rows.push({ item, depth });
-    rows.push(...flattenItems(item.id, depth + 1, map));
+    if (isRepeatItem(item, map) && isExpanded(item)) {
+      rows.push(...flattenItems(item.id, depth + 1, map));
+    }
   });
   return rows;
+}
+
+function isRepeatItem(item, map = childMap()) {
+  return item.item_type === "repeat" || numberValue(item.periods) > 1 || (map.get(item.id) || []).length > 0;
+}
+
+function isExpanded(item) {
+  return !state.collapsedItemIds.has(item.id);
+}
+
+function toggleExpanded(id) {
+  if (state.collapsedItemIds.has(id)) {
+    state.collapsedItemIds.delete(id);
+  } else {
+    state.collapsedItemIds.add(id);
+  }
+}
+
+function normalizeRepeatState(item, map = childMap()) {
+  const hasChildren = (map.get(item.id) || []).length > 0;
+  const periods = numberValue(item.periods);
+  if (periods > 1 || hasChildren) {
+    item.item_type = "repeat";
+    item.thickness_nm = null;
+    if (hasChildren) {
+      item.material = "";
+      item.doping = "";
+      item.single_period_thickness_nm = null;
+      item.is_quantum_dot = 0;
+    }
+  } else {
+    item.item_type = "layer";
+    item.periods = "";
+    item.single_period_thickness_nm = null;
+  }
+}
+
+function itemPayload(item) {
+  const clone = { ...item };
+  delete clone.children;
+  normalizeRepeatState(clone, childMap());
+  return clone;
 }
 
 function renderInspector() {
@@ -451,11 +583,11 @@ function renderInspector() {
   const map = childMap();
   const stats = computeStats(map);
   els.totalThickness.textContent = `${formatNumber(stats.totalThickness)} nm`;
-  renderStack(map, stats);
+  renderStack(map);
   renderStats(stats);
 }
 
-function renderStack(map, stats) {
+function renderStack(map) {
   const roots = map.get(null) || [];
   if (!roots.length) {
     els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
@@ -464,27 +596,27 @@ function renderStack(map, stats) {
   els.stackVisual.innerHTML = roots
     .map((item, index) => {
       const computed = computeItem(item, map);
-      const isRepeat = item.item_type === "repeat";
+      const repeat = isRepeatItem(item, map);
       const qdLike = item.is_quantum_dot || /(^|\s)(QD|quantum dot)|量子点/i.test(`${item.layer_name} ${item.material}`);
       const color = materialColor(item.material || item.layer_name || String(index));
       const flex = Math.max(computed.thickness, qdLike ? 0.08 : 0.02);
-      const meta = stackMeta(item, computed);
       return `
-        <div class="stack-segment ${isRepeat ? "repeat" : ""} ${hasDoping(item) ? "doped" : ""} ${qdLike ? "qd" : ""}"
+        <div class="stack-segment ${repeat ? "repeat" : ""} ${hasDoping(item) ? "doped" : ""} ${qdLike ? "qd" : ""}"
           style="flex-grow:${flex}; background-color:${color}">
           <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
-          <div class="segment-meta">${escapeHtml(meta)}</div>
+          <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map))}</div>
         </div>
       `;
     })
     .join("");
 }
 
-function stackMeta(item, computed) {
+function stackMeta(item, computed, map) {
   const material = item.material || "";
   const thickness = `${formatNumber(computed.thickness)} nm`;
-  if (item.item_type === "repeat") {
-    return `${material} · ${item.periods || 1}x · ${thickness}`;
+  if (isRepeatItem(item, map)) {
+    const childCount = (map.get(item.id) || []).length;
+    return `${item.periods || 1}x · ${childCount ? `${childCount} 内部层 · ` : material ? `${material} · ` : ""}${thickness}`;
   }
   if (item.is_quantum_dot) {
     return `${material} · 显示 / 不计厚度`;
@@ -515,8 +647,8 @@ function renderStats(stats) {
   els.statsContent.innerHTML = `
     <div class="metric-grid">
       <div class="metric"><strong>${formatNumber(stats.totalThickness)}</strong><span>总厚度 nm</span></div>
-      <div class="metric"><strong>${stats.layerCount}</strong><span>普通层</span></div>
-      <div class="metric"><strong>${stats.repeatCount}</strong><span>重复块</span></div>
+      <div class="metric"><strong>${stats.layerCount}</strong><span>层</span></div>
+      <div class="metric"><strong>${stats.repeatCount}</strong><span>重复层</span></div>
       <div class="metric"><strong>${stats.dopedItems.length}</strong><span>掺杂层</span></div>
     </div>
     <div>
@@ -546,10 +678,11 @@ function computeStats(map) {
 }
 
 function computeItem(item, map, stats = null, multiplier = 1) {
-  if (stats && hasDoping(item)) stats.dopedItems.push(item);
-  if (item.item_type === "repeat") {
+  const repeat = isRepeatItem(item, map);
+  if (!repeat && stats && hasDoping(item)) stats.dopedItems.push(item);
+  if (repeat) {
     if (stats) stats.repeatCount += 1;
-    const periods = Number(item.periods) || 1;
+    const periods = numberValue(item.periods) || 1;
     const children = map.get(item.id) || [];
     if (children.length) {
       let periodThickness = 0;
@@ -559,6 +692,7 @@ function computeItem(item, map, stats = null, multiplier = 1) {
       });
       return { thickness: periodThickness * periods };
     }
+    if (stats && hasDoping(item)) stats.dopedItems.push(item);
     const single = numberValue(item.single_period_thickness_nm);
     const total = single * periods;
     addMaterial(stats, item.material, total * multiplier);
@@ -569,6 +703,10 @@ function computeItem(item, map, stats = null, multiplier = 1) {
   const effective = item.is_quantum_dot ? 0 : visible;
   addMaterial(stats, item.material, effective * multiplier);
   return { thickness: effective };
+}
+
+function sumThickness(items, map) {
+  return items.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
 }
 
 function addMaterial(stats, material, thickness) {
@@ -588,21 +726,36 @@ function loadShortcuts() {
   } catch {
     state.shortcuts = DEFAULT_SHORTCUTS;
   }
+  state.shortcuts = state.shortcuts.map(normalizeShortcut);
 }
 
 function saveShortcuts() {
   localStorage.setItem("mbe-shortcuts", JSON.stringify(state.shortcuts));
 }
 
+function normalizeShortcut(shortcut) {
+  return {
+    label: shortcut.label || shortcut.key || shortcut.material || "快捷项",
+    layer_name: shortcut.layer_name || "",
+    material: shortcut.material || "",
+    thickness_nm: shortcut.thickness_nm || "",
+    doping: shortcut.doping || ""
+  };
+}
+
 function renderShortcuts() {
-  const header = ["键", "层名", "材料", "厚度", "掺杂"].map((label) => `<div class="grid-label">${label}</div>`).join("");
+  const header = ["名称", "层名", "材料", "厚度", "掺杂", "操作"].map((label) => `<div class="grid-label">${label}</div>`).join("");
   const rows = state.shortcuts
     .map((shortcut, index) => `
-      <input data-shortcut-index="${index}" data-shortcut-field="key" value="${escapeAttr(shortcut.key)}" />
+      <input data-shortcut-index="${index}" data-shortcut-field="label" value="${escapeAttr(shortcut.label)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="layer_name" value="${escapeAttr(shortcut.layer_name)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="material" value="${escapeAttr(shortcut.material)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="thickness_nm" value="${escapeAttr(shortcut.thickness_nm)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="doping" value="${escapeAttr(shortcut.doping)}" />
+      <div class="shortcut-actions">
+        <button class="quick-apply" data-shortcut-action="apply" data-shortcut-index="${index}">加</button>
+        <button data-shortcut-action="remove" data-shortcut-index="${index}">×</button>
+      </div>
     `)
     .join("");
   els.shortcutList.innerHTML = header + rows;
@@ -610,11 +763,32 @@ function renderShortcuts() {
 
 function handleShortcutInput(event) {
   const input = event.target.closest("[data-shortcut-index]");
-  if (!input) return;
+  if (!input || !input.dataset.shortcutField) return;
   const index = Number(input.dataset.shortcutIndex);
   const field = input.dataset.shortcutField;
   state.shortcuts[index][field] = input.value;
   saveShortcuts();
+}
+
+function handleShortcutClick(event) {
+  const button = event.target.closest("[data-shortcut-action]");
+  if (!button) return;
+  const index = Number(button.dataset.shortcutIndex);
+  const action = button.dataset.shortcutAction;
+  if (action === "apply") {
+    applyShortcut(state.shortcuts[index]);
+  }
+  if (action === "remove") {
+    state.shortcuts.splice(index, 1);
+    saveShortcuts();
+    renderShortcuts();
+  }
+}
+
+function addShortcut() {
+  state.shortcuts.push({ label: "新项", layer_name: "", material: "", thickness_nm: "", doping: "" });
+  saveShortcuts();
+  renderShortcuts();
 }
 
 function resetShortcuts() {
@@ -623,25 +797,39 @@ function resetShortcuts() {
   renderShortcuts();
 }
 
-function handleShortcutKey(event) {
-  if (!event.altKey || event.metaKey || event.ctrlKey) return;
-  const key = `Alt+${event.key.toUpperCase()}`;
-  const shortcut = state.shortcuts.find((candidate) => candidate.key.toUpperCase() === key);
-  if (!shortcut || !selectedItem()) return;
-  event.preventDefault();
-  applyShortcut(shortcut);
-}
-
 function applyShortcut(shortcut) {
   const item = selectedItem();
-  if (!item) return;
-  ["layer_name", "material", "thickness_nm", "doping"].forEach((field) => {
-    if (shortcut[field] !== undefined) item[field] = shortcut[field];
-  });
+  if (!item) {
+    showStatus("先选择一层");
+    return;
+  }
+  const map = childMap();
+  if (isRepeatItem(item, map) && (map.get(item.id) || []).length) {
+    showStatus("请选择展开的具体内部层");
+    return;
+  }
+  if (shortcut.layer_name && (!item.layer_name || ["新层", "内部层"].includes(item.layer_name))) {
+    item.layer_name = shortcut.layer_name;
+  }
+  item.material = appendUnique(item.material, shortcut.material);
+  item.doping = appendUnique(item.doping, shortcut.doping);
+  if (shortcut.thickness_nm) {
+    item.thickness_nm = shortcut.thickness_nm;
+  }
+  normalizeRepeatState(item, map);
   scheduleItemSave(item);
   renderItems();
   renderInspector();
-  showStatus(shortcut.key);
+  showStatus(`${shortcut.label} 已加上去`);
+}
+
+function appendUnique(existing, addition) {
+  const add = String(addition || "").trim();
+  const current = String(existing || "").trim();
+  if (!add) return current;
+  if (!current) return add;
+  if (current.toLowerCase().split("+").map((part) => part.trim()).includes(add.toLowerCase())) return current;
+  return `${current} + ${add}`;
 }
 
 function pickWaferFields(wafer) {

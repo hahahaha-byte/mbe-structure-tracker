@@ -27,6 +27,7 @@ from mbe_tracker.database import (
     move_item,
     paste_item,
     payload_json,
+    restore_item_tree,
     update_item,
     update_wafer,
 )
@@ -179,12 +180,16 @@ class MBEHandler(BaseHTTPRequestHandler):
                 json_response(self, HTTPStatus.OK, {"item": update_item(conn, int(parts[2]), body)})
                 return
             if method == "DELETE" and len(parts) == 3 and parts[:2] == ["api", "items"]:
-                delete_item(conn, int(parts[2]))
-                json_response(self, HTTPStatus.OK, {"ok": True})
+                deleted = delete_item(conn, int(parts[2]))
+                json_response(self, HTTPStatus.OK, {"ok": True, "deleted": deleted})
                 return
             if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "move":
                 item = move_item(conn, int(parts[2]), body.get("direction", "up"))
                 json_response(self, HTTPStatus.OK, {"item": item})
+                return
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["api", "wafers"] and parts[3] == "restore":
+                item = restore_item_tree(conn, int(parts[2]), body["tree"])
+                json_response(self, HTTPStatus.CREATED, {"item": item})
                 return
             if method == "POST" and parts == ["api", "import", "excel"]:
                 result = import_excel(conn, body)
@@ -345,4 +350,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

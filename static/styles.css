@@ -286,7 +286,7 @@ input:focus {
 }
 
 .actions-col {
-  width: 116px;
+  width: 156px;
 }
 
 .row-actions {
@@ -317,6 +317,15 @@ input:focus {
 
 .type-badge.repeat {
   background: var(--repeat);
+}
+
+.type-badge.inner {
+  background: var(--accent);
+}
+
+.ghost-text {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .indent-cell {
@@ -359,9 +368,14 @@ input:focus {
   margin-bottom: 10px;
 }
 
+.title-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .shortcut-grid {
   display: grid;
-  grid-template-columns: 82px minmax(120px, 1fr) minmax(160px, 1.4fr) 100px minmax(150px, 1.4fr);
+  grid-template-columns: 90px minmax(120px, 1fr) minmax(160px, 1.4fr) 92px minmax(150px, 1.4fr) 88px;
   gap: 6px;
 }
 
@@ -373,6 +387,28 @@ input:focus {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.quick-apply {
+  background: var(--accent-soft);
+  border-color: rgba(11, 118, 110, 0.25);
+  color: var(--accent-strong);
+}
+
+.shortcut-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.shortcut-actions button {
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+#undoDeleteBtn:not(:disabled) {
+  border-color: var(--warning);
+  color: #6e3b08;
+  background: #fff3df;
 }
 
 .inspector {
@@ -575,4 +611,3 @@ input:focus {
     grid-template-columns: 1fr;
   }
 }
-

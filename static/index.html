@@ -52,8 +52,8 @@
         <section class="toolbar">
           <div class="tool-group">
             <button data-action="add-layer">+ 层</button>
-            <button data-action="add-repeat">+ 重复块</button>
-            <button data-action="add-child">+ 子层</button>
+            <button data-action="add-inner-layer">+ 内部层</button>
+            <button data-action="undo-delete" id="undoDeleteBtn" disabled>撤回删除</button>
           </div>
           <div class="tool-group">
             <button data-action="copy-item">复制</button>
@@ -72,7 +72,7 @@
             <thead>
               <tr>
                 <th class="actions-col"></th>
-                <th>类型</th>
+                <th>状态</th>
                 <th>层名</th>
                 <th>材料结构</th>
                 <th>厚度 nm</th>
@@ -90,8 +90,11 @@
 
         <section class="shortcuts">
           <div class="section-title">
-            <h2>快捷键</h2>
-            <button id="resetShortcutsBtn">重置</button>
+            <h2>快捷项</h2>
+            <div class="title-actions">
+              <button id="addShortcutBtn">+ 项</button>
+              <button id="resetShortcutsBtn">重置</button>
+            </div>
           </div>
           <div id="shortcutList" class="shortcut-grid"></div>
         </section>
@@ -118,4 +121,3 @@
     <script src="/static/app.js"></script>
   </body>
 </html>
-
