@@ -176,11 +176,24 @@ function renderItemRow(item, depth, map) {
   const periodThickness = children.length ? sumThickness(children, map) : numberValue(item.single_period_thickness_nm);
   const hasNestedRows = children.length > 0;
   const materialDisabled = repeat && hasNestedRows;
-  const singleDisabled = !repeat || hasNestedRows;
   const dopingDisabled = repeat && hasNestedRows;
   const qdDisabled = repeat && hasNestedRows;
   const rowLabel = repeat ? "重复层" : depth > 0 ? "内部层" : "层";
   const rowClass = repeat ? "repeat-row" : child;
+  const materialCell = materialDisabled
+    ? lockedCell("展开内部层，在内部层里填写具体材料", "展开内部层填写")
+    : `<input data-field="material" value="${escapeAttr(item.material)}" />`;
+  const thicknessCell = repeat
+    ? lockedCell("重复层厚度由周期和内部层自动计算", `自动 ${formatNumber(computed.thickness)}`)
+    : `<input data-field="thickness_nm" value="${escapeAttr(blankNumber(item.thickness_nm))}" />`;
+  const singlePeriodCell = hasNestedRows
+    ? lockedCell("单周期厚度由内部层自动相加", `自动 ${formatNumber(periodThickness)}`)
+    : repeat
+      ? `<input data-field="single_period_thickness_nm" value="${escapeAttr(blankNumber(item.single_period_thickness_nm))}" />`
+      : lockedCell("先在“周期”里填大于 1 的数字，再填写单周期厚度", "先填周期");
+  const dopingCell = dopingDisabled
+    ? lockedCell("展开内部层，在具体内部层里填写掺杂", "展开内部层填写")
+    : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`;
   return `
     <tr class="${selected} ${rowClass} ${child}" data-id="${item.id}">
       <td>
@@ -199,18 +212,20 @@ function renderItemRow(item, depth, map) {
           <input data-field="layer_name" value="${escapeAttr(item.layer_name)}" />
         </div>
       </td>
-      <td>${materialDisabled ? `<span class="ghost-text">展开层里填写</span>` : `<input data-field="material" value="${escapeAttr(item.material)}" />`}</td>
-      <td>
-        <input data-field="thickness_nm" value="${repeat ? formatNumber(computed.thickness) : escapeAttr(blankNumber(item.thickness_nm))}" ${repeat ? "disabled" : ""} />
-      </td>
+      <td>${materialCell}</td>
+      <td>${thicknessCell}</td>
       <td><input data-field="periods" value="${escapeAttr(blankNumber(item.periods))}" /></td>
-      <td><input data-field="single_period_thickness_nm" value="${repeat ? formatNumber(periodThickness) : escapeAttr(blankNumber(item.single_period_thickness_nm))}" ${singleDisabled ? "disabled" : ""} /></td>
-      <td>${dopingDisabled ? `<span class="ghost-text">展开层里填写</span>` : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`}</td>
+      <td>${singlePeriodCell}</td>
+      <td>${dopingCell}</td>
       <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" /></td>
       <td class="checkbox-cell"><input data-field="is_quantum_dot" type="checkbox" ${item.is_quantum_dot ? "checked" : ""} ${qdDisabled ? "disabled" : ""} /></td>
       <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
     </tr>
   `;
+}
+
+function lockedCell(message, text) {
+  return `<span class="locked-cell" data-lock-message="${escapeAttr(message)}" title="${escapeAttr(message)}">${escapeHtml(text)}</span>`;
 }
 
 function handleWaferListClick(event) {
@@ -242,6 +257,16 @@ async function handleTableClick(event) {
   if (!row) return;
   const id = Number(row.dataset.id);
   const actionButton = event.target.closest("button[data-action]");
+  const locked = event.target.closest("[data-lock-message]");
+  if (event.target.closest("input, textarea, select")) {
+    markSelectedRow(id);
+    return;
+  }
+  if (locked) {
+    selectItem(id);
+    showStatus(locked.dataset.lockMessage);
+    return;
+  }
   if (!actionButton) {
     selectItem(id);
     return;
@@ -547,6 +572,13 @@ function downloadExport(kind) {
 function selectItem(id) {
   state.selectedItemId = id;
   renderItems();
+}
+
+function markSelectedRow(id) {
+  state.selectedItemId = id;
+  els.layerTableBody.querySelectorAll("tr[data-id]").forEach((row) => {
+    row.classList.toggle("selected", Number(row.dataset.id) === id);
+  });
 }
 
 function selectedItem() {

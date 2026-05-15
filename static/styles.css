@@ -328,6 +328,20 @@ input:focus {
   font-size: 12px;
 }
 
+.locked-cell {
+  min-height: 30px;
+  border-radius: 5px;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  background: #f4f5f2;
+  border: 1px solid transparent;
+  cursor: help;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
 .indent-cell {
   display: grid;
 }
