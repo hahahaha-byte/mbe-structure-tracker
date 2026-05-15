@@ -2,6 +2,7 @@ const state = {
   wafers: [],
   current: null,
   selectedItemId: null,
+  insertTargetItemId: null,
   copiedItemId: null,
   undoHistory: new Map(),
   collapsedItemIds: new Set(),
@@ -59,6 +60,8 @@ function bindEvents() {
 
   document.querySelector(".toolbar").addEventListener("click", handleToolbarClick);
   els.waferList.addEventListener("click", handleWaferListClick);
+  els.layerTableBody.addEventListener("pointerdown", rememberTableTarget);
+  els.layerTableBody.addEventListener("focusin", rememberTableTarget);
   els.layerTableBody.addEventListener("click", handleTableClick);
   els.layerTableBody.addEventListener("input", handleItemInput);
   els.layerTableBody.addEventListener("change", handleItemInput);
@@ -103,6 +106,8 @@ async function loadWafers(selectId = null) {
     await loadWafer(idToLoad);
   } else {
     state.current = null;
+    state.selectedItemId = null;
+    state.insertTargetItemId = null;
     renderCurrent();
   }
 }
@@ -113,6 +118,7 @@ async function loadWafer(id) {
   if (!state.current.items.some((item) => item.id === state.selectedItemId)) {
     state.selectedItemId = state.current.items[0]?.id || null;
   }
+  state.insertTargetItemId = state.selectedItemId;
   renderCurrent();
   renderWaferList();
 }
@@ -373,6 +379,7 @@ async function createNewWafer() {
       body: JSON.stringify({ wafer_code, size: "3英寸", structure_name: "" })
     });
     state.selectedItemId = null;
+    state.insertTargetItemId = null;
     await loadWafers(payload.wafer.id);
   } catch (error) {
     showError(error);
@@ -380,23 +387,24 @@ async function createNewWafer() {
 }
 
 async function addLayer() {
-  const selected = selectedItem();
+  const target = insertionTargetItem() || firstVisibleItem();
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
       item_type: "layer",
-      before_id: selected?.id || null,
+      before_id: target?.id || null,
       layer_name: "新层",
       material: "",
       thickness_nm: 0
     })
   });
   state.selectedItemId = payload.item.id;
+  state.insertTargetItemId = payload.item.id;
   await loadWafer(state.current.id);
 }
 
 async function addInnerLayer() {
-  const selected = selectedItem();
+  const selected = insertionTargetItem();
   const map = childMap();
   let parent = selected && isRepeatItem(selected, map) ? selected : null;
   let beforeId = null;
@@ -441,6 +449,7 @@ async function addInnerLayer() {
     })
   });
   state.selectedItemId = payload.item.id;
+  state.insertTargetItemId = payload.item.id;
   await loadWafer(state.current.id);
 }
 
@@ -455,6 +464,7 @@ async function deleteSelectedItem(id) {
     });
   }
   state.selectedItemId = null;
+  state.insertTargetItemId = null;
   updateUndoButton();
   await loadWafer(state.current.id);
   showStatus("已删除，可撤回上一步");
@@ -476,6 +486,7 @@ async function undoLastStep() {
     body: JSON.stringify({ tree: step.tree })
   });
   state.selectedItemId = payload.item.id;
+  state.insertTargetItemId = payload.item.id;
   remapPendingUndoParents(payload.id_map || {});
   updateUndoButton();
   await loadWafer(state.current.id);
@@ -525,7 +536,7 @@ function remapTreeParentIds(tree, entries) {
 }
 
 function copySelectedItem() {
-  const item = selectedItem();
+  const item = insertionTargetItem();
   if (!item) {
     showStatus("未选择层");
     return;
@@ -539,15 +550,16 @@ async function pasteItem() {
     showStatus("剪贴板为空");
     return;
   }
-  const selected = selectedItem();
+  const target = insertionTargetItem() || firstVisibleItem();
   const payload = await api(`/api/wafers/${state.current.id}/paste`, {
     method: "POST",
     body: JSON.stringify({
       source_item_id: state.copiedItemId,
-      after_id: selected?.id || null
+      before_id: target?.id || null
     })
   });
   state.selectedItemId = payload.item.id;
+  state.insertTargetItemId = payload.item.id;
   await loadWafer(state.current.id);
 }
 
@@ -584,19 +596,43 @@ function downloadExport(kind) {
 
 function selectItem(id) {
   state.selectedItemId = id;
+  state.insertTargetItemId = id;
   renderItems();
 }
 
 function markSelectedRow(id) {
   state.selectedItemId = id;
+  state.insertTargetItemId = id;
   els.layerTableBody.querySelectorAll("tr[data-id]").forEach((row) => {
     row.classList.toggle("selected", Number(row.dataset.id) === id);
   });
 }
 
+function rememberTableTarget(event) {
+  const row = event.target.closest("tr[data-id]");
+  if (!row) return;
+  markSelectedRow(Number(row.dataset.id));
+}
+
 function selectedItem() {
   if (!state.current || !state.selectedItemId) return null;
   return state.current.items.find((item) => item.id === state.selectedItemId) || null;
+}
+
+function insertionTargetItem() {
+  if (!state.current) return null;
+  const activeRow = document.activeElement?.closest?.("tr[data-id]");
+  const ids = [
+    activeRow ? Number(activeRow.dataset.id) : null,
+    state.insertTargetItemId,
+    state.selectedItemId
+  ];
+  for (const id of ids) {
+    if (!id) continue;
+    const item = state.current.items.find((candidate) => candidate.id === id);
+    if (item) return item;
+  }
+  return null;
 }
 
 function firstVisibleItem() {
@@ -958,7 +994,7 @@ async function insertShortcutLayer(shortcut) {
     showStatus("先选择外延片");
     return;
   }
-  const target = selectedItem() || firstVisibleItem();
+  const target = insertionTargetItem() || firstVisibleItem();
   const payload = {
     item_type: "layer",
     before_id: target?.id || null,
@@ -972,6 +1008,7 @@ async function insertShortcutLayer(shortcut) {
     body: JSON.stringify(payload)
   });
   state.selectedItemId = result.item.id;
+  state.insertTargetItemId = result.item.id;
   await loadWafer(state.current.id);
   showStatus(`${shortcut.label || "快捷项"} 已插入为新层`);
 }

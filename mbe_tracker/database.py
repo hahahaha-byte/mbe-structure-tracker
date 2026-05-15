@@ -588,9 +588,21 @@ def paste_item(
     source_item_id: int,
     target_parent_id: Optional[int] = None,
     after_id: Optional[int] = None,
+    before_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     order_index = None
-    if after_id:
+    before_id = clean_int(before_id)
+    after_id = clean_int(after_id)
+    if before_id:
+        before = row_to_dict(
+            conn.execute("SELECT * FROM structure_item WHERE id = ? AND wafer_id = ?", (before_id, target_wafer_id)).fetchone()
+        )
+        if not before:
+            raise KeyError("before_item_not_found")
+        target_parent_id = before["parent_id"]
+        order_index = int(before["order_index"])
+        shift_siblings(conn, target_wafer_id, target_parent_id, order_index)
+    elif after_id:
         after = row_to_dict(
             conn.execute("SELECT * FROM structure_item WHERE id = ? AND wafer_id = ?", (after_id, target_wafer_id)).fetchone()
         )

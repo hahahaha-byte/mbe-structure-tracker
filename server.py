@@ -173,6 +173,7 @@ class MBEHandler(BaseHTTPRequestHandler):
                     int(body["source_item_id"]),
                     body.get("parent_id"),
                     body.get("after_id"),
+                    body.get("before_id"),
                 )
                 json_response(self, HTTPStatus.CREATED, {"item": item})
                 return
