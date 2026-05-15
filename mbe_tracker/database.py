@@ -281,9 +281,19 @@ def sibling_where(parent_id: Optional[int]) -> str:
 
 def create_item(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     after_id = clean_int(data.get("after_id"))
+    before_id = clean_int(data.get("before_id"))
     parent_id = clean_int(data.get("parent_id"))
     order_index = None
-    if after_id:
+    if before_id:
+        before = row_to_dict(
+            conn.execute("SELECT * FROM structure_item WHERE id = ? AND wafer_id = ?", (before_id, wafer_id)).fetchone()
+        )
+        if not before:
+            raise KeyError("before_item_not_found")
+        parent_id = before["parent_id"]
+        order_index = int(before["order_index"])
+        shift_siblings(conn, wafer_id, parent_id, order_index)
+    elif after_id:
         after = row_to_dict(
             conn.execute("SELECT * FROM structure_item WHERE id = ? AND wafer_id = ?", (after_id, wafer_id)).fetchone()
         )

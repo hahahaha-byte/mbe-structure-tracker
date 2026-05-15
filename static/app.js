@@ -55,7 +55,6 @@ function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
   document.getElementById("importExcelBtn").addEventListener("click", importExcel);
   document.getElementById("addShortcutBtn").addEventListener("click", addShortcut);
-  document.getElementById("resetShortcutsBtn").addEventListener("click", resetShortcuts);
   els.searchInput.addEventListener("input", debounce(() => loadWafers(), 180));
 
   document.querySelector(".toolbar").addEventListener("click", handleToolbarClick);
@@ -386,7 +385,7 @@ async function addLayer() {
     method: "POST",
     body: JSON.stringify({
       item_type: "layer",
-      after_id: selected?.id || null,
+      before_id: selected?.id || null,
       layer_name: "新层",
       material: "",
       thickness_nm: 0
@@ -400,12 +399,12 @@ async function addInnerLayer() {
   const selected = selectedItem();
   const map = childMap();
   let parent = selected && isRepeatItem(selected, map) ? selected : null;
-  let afterId = null;
+  let beforeId = null;
   if (!parent && selected?.parent_id) {
     const maybeParent = state.current.items.find((item) => item.id === selected.parent_id);
     if (maybeParent && isRepeatItem(maybeParent, map)) {
       parent = maybeParent;
-      afterId = selected.id;
+      beforeId = selected.id;
     }
   }
   if (!parent && selected && numberValue(selected.periods) > 1) {
@@ -427,11 +426,14 @@ async function addInnerLayer() {
   parent.is_quantum_dot = 0;
   scheduleItemSave(parent);
   state.collapsedItemIds.delete(parent.id);
+  if (!beforeId) {
+    beforeId = (map.get(parent.id) || [])[0]?.id || null;
+  }
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
       parent_id: parent.id,
-      after_id: afterId,
+      before_id: beforeId,
       item_type: "layer",
       layer_name: "内部层",
       material: "",
@@ -595,6 +597,11 @@ function markSelectedRow(id) {
 function selectedItem() {
   if (!state.current || !state.selectedItemId) return null;
   return state.current.items.find((item) => item.id === state.selectedItemId) || null;
+}
+
+function firstVisibleItem() {
+  if (!state.current) return null;
+  return flattenItems(null, 0, childMap())[0]?.item || null;
 }
 
 function childMap() {
@@ -908,7 +915,7 @@ function renderShortcuts() {
       <input data-shortcut-index="${index}" data-shortcut-field="thickness_nm" value="${escapeAttr(shortcut.thickness_nm)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="doping" value="${escapeAttr(shortcut.doping)}" />
       <div class="shortcut-actions">
-        <button class="quick-apply" data-shortcut-action="apply" data-shortcut-index="${index}">加</button>
+        <button class="quick-apply" data-shortcut-action="insert" data-shortcut-index="${index}" title="在选中层上方插入">+</button>
         <button data-shortcut-action="remove" data-shortcut-index="${index}">×</button>
       </div>
     `)
@@ -930,8 +937,8 @@ function handleShortcutClick(event) {
   if (!button) return;
   const index = Number(button.dataset.shortcutIndex);
   const action = button.dataset.shortcutAction;
-  if (action === "apply") {
-    applyShortcut(state.shortcuts[index]);
+  if (action === "insert") {
+    insertShortcutLayer(state.shortcuts[index]).catch(showError);
   }
   if (action === "remove") {
     state.shortcuts.splice(index, 1);
@@ -946,45 +953,27 @@ function addShortcut() {
   renderShortcuts();
 }
 
-function resetShortcuts() {
-  state.shortcuts = DEFAULT_SHORTCUTS.map((shortcut) => ({ ...shortcut }));
-  saveShortcuts();
-  renderShortcuts();
-}
-
-function applyShortcut(shortcut) {
-  const item = selectedItem();
-  if (!item) {
-    showStatus("先选择一层");
+async function insertShortcutLayer(shortcut) {
+  if (!state.current) {
+    showStatus("先选择外延片");
     return;
   }
-  const map = childMap();
-  if (isRepeatItem(item, map) && (map.get(item.id) || []).length) {
-    showStatus("请选择展开的具体内部层");
-    return;
-  }
-  if (shortcut.layer_name && (!item.layer_name || ["新层", "内部层"].includes(item.layer_name))) {
-    item.layer_name = shortcut.layer_name;
-  }
-  item.material = appendUnique(item.material, shortcut.material);
-  item.doping = appendUnique(item.doping, shortcut.doping);
-  if (shortcut.thickness_nm) {
-    item.thickness_nm = shortcut.thickness_nm;
-  }
-  normalizeRepeatState(item, map);
-  scheduleItemSave(item);
-  renderItems();
-  renderInspector();
-  showStatus(`${shortcut.label} 已加上去`);
-}
-
-function appendUnique(existing, addition) {
-  const add = String(addition || "").trim();
-  const current = String(existing || "").trim();
-  if (!add) return current;
-  if (!current) return add;
-  if (current.toLowerCase().split("+").map((part) => part.trim()).includes(add.toLowerCase())) return current;
-  return `${current} + ${add}`;
+  const target = selectedItem() || firstVisibleItem();
+  const payload = {
+    item_type: "layer",
+    before_id: target?.id || null,
+    layer_name: shortcut.layer_name || shortcut.label || "新层",
+    material: shortcut.material || "",
+    thickness_nm: shortcut.thickness_nm || 0,
+    doping: shortcut.doping || ""
+  };
+  const result = await api(`/api/wafers/${state.current.id}/items`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  state.selectedItemId = result.item.id;
+  await loadWafer(state.current.id);
+  showStatus(`${shortcut.label || "快捷项"} 已插入为新层`);
 }
 
 function pickWaferFields(wafer) {
