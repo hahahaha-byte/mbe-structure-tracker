@@ -281,12 +281,16 @@ input:focus {
   background-image: linear-gradient(90deg, rgba(92, 109, 57, 0.09), transparent);
 }
 
-.layer-table tr.child-row td:first-child {
-  border-left: 4px solid var(--accent-soft);
+.layer-table tr.nested-row td {
+  background-color: #fbfdfb;
+}
+
+.layer-table tr.selected td {
+  background-color: #edf7f4;
 }
 
 .actions-col {
-  width: 156px;
+  width: 220px;
 }
 
 .row-actions {
@@ -295,12 +299,47 @@ input:focus {
   gap: 3px;
 }
 
+.action-cell {
+  min-width: calc(188px + var(--level-offset, 0px));
+}
+
+.tree-actions {
+  position: relative;
+  padding-left: var(--level-offset, 0px);
+}
+
+.nested-row .tree-actions::before,
+.nested-row .tree-actions::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.nested-row .tree-actions::before {
+  left: var(--rail-offset, 0px);
+  top: -7px;
+  bottom: -7px;
+  border-left: 2px solid rgba(11, 118, 110, 0.28);
+}
+
+.nested-row .tree-actions::after {
+  left: var(--rail-offset, 0px);
+  top: 50%;
+  width: 16px;
+  border-top: 2px solid rgba(11, 118, 110, 0.28);
+}
+
 .row-actions button {
   width: 26px;
   min-width: 26px;
   min-height: 26px;
   padding: 0;
   border-radius: 5px;
+}
+
+.layer-table td.status-cell {
+  padding-left: calc(6px + var(--level-offset, 0px));
+  min-width: calc(68px + var(--level-offset, 0px));
 }
 
 .type-badge {
@@ -344,10 +383,22 @@ input:focus {
 
 .indent-cell {
   display: grid;
+  padding-left: var(--level-offset, 0px);
+  position: relative;
+}
+
+.nested-row .indent-cell::before {
+  content: "";
+  position: absolute;
+  left: max(0px, calc(var(--level-offset, 0px) - 14px));
+  top: 50%;
+  width: 14px;
+  border-top: 2px solid rgba(11, 118, 110, 0.2);
+  pointer-events: none;
 }
 
 .indent-cell input {
-  padding-left: var(--indent, 9px);
+  padding-left: 9px;
 }
 
 .layer-table input {

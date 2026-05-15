@@ -180,6 +180,9 @@ function renderItemRow(item, depth, map) {
   const qdDisabled = repeat && hasNestedRows;
   const rowLabel = repeat ? "重复层" : depth > 0 ? "内部层" : "层";
   const rowClass = repeat ? "repeat-row" : child;
+  const depthClass = depth > 0 ? "nested-row" : "root-row";
+  const levelOffset = depth * 32;
+  const railOffset = Math.max(0, levelOffset - 16);
   const materialCell = materialDisabled
     ? lockedCell("展开内部层，在内部层里填写具体材料", "展开内部层填写")
     : `<input data-field="material" value="${escapeAttr(item.material)}" />`;
@@ -195,9 +198,9 @@ function renderItemRow(item, depth, map) {
     ? lockedCell("展开内部层，在具体内部层里填写掺杂", "展开内部层填写")
     : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`;
   return `
-    <tr class="${selected} ${rowClass} ${child}" data-id="${item.id}">
-      <td>
-        <div class="row-actions">
+    <tr class="${selected} ${rowClass} ${child} ${depthClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
+      <td class="action-cell">
+        <div class="row-actions tree-actions">
           <button data-action="select-row" title="选择">•</button>
           <button data-action="toggle-expand" title="${expanded ? "收起" : "展开"}" ${repeat ? "" : "disabled"}>${repeat ? (expanded ? "▾" : "▸") : "·"}</button>
           <button data-action="move-up" title="上移">↑</button>
@@ -206,9 +209,9 @@ function renderItemRow(item, depth, map) {
           <button data-action="delete-item" title="删除">×</button>
         </div>
       </td>
-      <td><span class="type-badge ${repeat ? "repeat" : depth > 0 ? "inner" : ""}">${rowLabel}</span></td>
-      <td>
-        <div class="indent-cell" style="--indent:${9 + depth * 18}px">
+      <td class="status-cell"><span class="type-badge ${repeat ? "repeat" : depth > 0 ? "inner" : ""}">${rowLabel}</span></td>
+      <td class="layer-name-cell">
+        <div class="indent-cell">
           <input data-field="layer_name" value="${escapeAttr(item.layer_name)}" />
         </div>
       </td>
