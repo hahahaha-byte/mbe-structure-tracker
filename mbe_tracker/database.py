@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 
+ROOT_DIR = Path(__file__).resolve().parent.parent
+SAMPLE_DATA_PATH = ROOT_DIR / "data" / "sample_wafers.json"
+
 ITEM_FIELDS = (
     "item_type",
     "parent_id",
@@ -49,6 +52,7 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
 
 def init_db(db_path: Path | str) -> None:
     path = Path(db_path)
+    should_seed_sample = not path.exists()
     path.parent.mkdir(parents=True, exist_ok=True)
     with connect(path) as conn:
         conn.executescript(
@@ -100,6 +104,20 @@ def init_db(db_path: Path | str) -> None:
             """
         )
         ensure_column(conn, "structure_item", "doping_type", "TEXT DEFAULT ''")
+        if should_seed_sample:
+            seed_sample_data(conn)
+
+
+def seed_sample_data(conn: sqlite3.Connection) -> None:
+    if conn.execute("SELECT 1 FROM wafer LIMIT 1").fetchone():
+        return
+    if not SAMPLE_DATA_PATH.exists():
+        return
+    try:
+        payload = json.loads(SAMPLE_DATA_PATH.read_text(encoding="utf-8"))
+        import_json_wafers(conn, payload, "skip")
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
 
 
 def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
@@ -691,55 +709,6 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
     for index, root in enumerate(roots):
         clone_item_tree(conn, int(root["id"]), new_wafer_id, None, index)
     return get_wafer(conn, new_wafer_id)
-
-
-def import_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], items: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
-    code = clean_text(wafer_data.get("wafer_code"))
-    if not code:
-        raise ValueError("wafer_code_required")
-    existing = row_to_dict(conn.execute("SELECT * FROM wafer WHERE wafer_code = ?", (code,)).fetchone())
-    now = utc_now()
-    if existing:
-        wafer_id = int(existing["id"])
-        conn.execute(
-            """
-            UPDATE wafer SET size = ?, structure_name = ?, growth_date = ?, notes = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                clean_text(wafer_data.get("size")),
-                clean_text(wafer_data.get("structure_name")),
-                clean_text(wafer_data.get("growth_date")),
-                clean_text(wafer_data.get("notes")),
-                now,
-                wafer_id,
-            ),
-        )
-        conn.execute("DELETE FROM structure_item WHERE wafer_id = ?", (wafer_id,))
-    else:
-        conn.execute(
-            """
-            INSERT INTO wafer (wafer_code, size, structure_name, growth_date, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                code,
-                clean_text(wafer_data.get("size")),
-                clean_text(wafer_data.get("structure_name")),
-                clean_text(wafer_data.get("growth_date")),
-                clean_text(wafer_data.get("notes")),
-                now,
-                now,
-            ),
-        )
-        wafer_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
-
-    for index, item in enumerate(items):
-        payload = dict(item)
-        payload["order_index"] = index
-        payload["parent_id"] = None
-        create_item(conn, wafer_id, payload)
-    return get_wafer(conn, wafer_id)
 
 
 def import_json_wafers(conn: sqlite3.Connection, payload: Any, conflict_strategy: str = "overwrite") -> Dict[str, Any]:

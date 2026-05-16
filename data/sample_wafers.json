@@ -1,0 +1,105 @@
+{
+  "wafers": [
+    {
+      "wafer_code": "N260508A",
+      "size": "3英寸",
+      "structure_name": "QD Laser full structure",
+      "growth_date": "",
+      "notes": "样板片：用于演示普通层、重复层、QD 标记和 N/P 掺杂信息。",
+      "items": [
+        {
+          "item_type": "layer",
+          "layer_name": "Contact",
+          "material": "GaAs",
+          "thickness_nm": 200,
+          "doping": "1.5e19",
+          "doping_type": "P"
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "Cladding",
+          "material": "Al0.45GaAs",
+          "thickness_nm": 1800,
+          "doping": "2e18",
+          "doping_type": "P"
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "Waveguide",
+          "material": "GaAs",
+          "thickness_nm": 150
+        },
+        {
+          "item_type": "repeat",
+          "layer_name": "Active",
+          "periods": 8,
+          "children": [
+            {
+              "item_type": "layer",
+              "layer_name": "",
+              "material": "GaAs",
+              "thickness_nm": 15
+            },
+            {
+              "item_type": "layer",
+              "layer_name": "cap",
+              "material": "In0.15GaAs",
+              "thickness_nm": 5
+            },
+            {
+              "item_type": "layer",
+              "layer_name": "QD",
+              "material": "InAs",
+              "thickness_nm": "2.3ML",
+              "doping": "1 e/dot",
+              "doping_type": "N",
+              "is_quantum_dot": 1
+            },
+            {
+              "item_type": "layer",
+              "layer_name": "",
+              "material": "GaAs",
+              "thickness_nm": 15
+            },
+            {
+              "item_type": "layer",
+              "layer_name": "P-Doping",
+              "material": "GaAs",
+              "thickness_nm": 10,
+              "doping": "10 hole/dot",
+              "doping_type": "P"
+            }
+          ]
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "Waveguide",
+          "material": "GaAs",
+          "thickness_nm": 150
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "Cladding",
+          "material": "Al0.45GaAs",
+          "thickness_nm": 1800,
+          "doping": "2e18",
+          "doping_type": "N"
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "buffer",
+          "material": "GaAs",
+          "thickness_nm": 500,
+          "doping": "2e18",
+          "doping_type": "N"
+        },
+        {
+          "item_type": "layer",
+          "layer_name": "Sub",
+          "material": "GaAs N+",
+          "doping_type": "N"
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 data/*.sqlite
 data/*.sqlite-*
+release/*.zip
 __pycache__/
 *.pyc
 .DS_Store

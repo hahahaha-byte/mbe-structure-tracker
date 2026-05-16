@@ -22,7 +22,6 @@ from mbe_tracker.database import (
     duplicate_wafer,
     export_payload,
     get_wafer,
-    import_wafer,
     import_json_wafers,
     init_db,
     list_wafers,
@@ -33,7 +32,6 @@ from mbe_tracker.database import (
     update_item,
     update_wafer,
 )
-from mbe_tracker.excel_importer import DEFAULT_IMPORT_DIR, iter_excel_files, parse_xlsx
 
 
 ROOT = Path(__file__).resolve().parent
@@ -82,7 +80,7 @@ def parse_body(handler: BaseHTTPRequestHandler) -> Dict[str, Any]:
 
 
 class MBEHandler(BaseHTTPRequestHandler):
-    server_version = "MBETracker/0.1"
+    server_version = "MBETracker/1.0"
 
     def do_GET(self) -> None:
         self.dispatch("GET")
@@ -201,10 +199,6 @@ class MBEHandler(BaseHTTPRequestHandler):
                 id_map = item.pop("_id_map", {})
                 json_response(self, HTTPStatus.CREATED, {"item": item, "id_map": id_map})
                 return
-            if method == "POST" and parts == ["api", "import", "excel"]:
-                result = import_excel(conn, body)
-                json_response(self, HTTPStatus.OK, result)
-                return
             if method == "POST" and parts == ["api", "import", "json"]:
                 result = import_json(conn, body)
                 json_response(self, HTTPStatus.OK, result)
@@ -237,21 +231,6 @@ def optional_int(value: Any) -> Optional[int]:
     if value in (None, ""):
         return None
     return int(value)
-
-
-def import_excel(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
-    directory = Path(body.get("directory") or DEFAULT_IMPORT_DIR).expanduser()
-    pattern = body.get("pattern") or "片号N*.xlsx"
-    imported = []
-    errors = []
-    for file_path in iter_excel_files(directory, pattern):
-        try:
-            parsed = parse_xlsx(file_path)
-            wafer = import_wafer(conn, parsed["wafer"], parsed["items"])
-            imported.append({"file": file_path.name, "wafer_code": wafer["wafer_code"], "item_count": len(wafer["items"])})
-        except Exception as exc:
-            errors.append({"file": file_path.name, "error": str(exc)})
-    return {"imported": imported, "errors": errors, "directory": str(directory), "pattern": pattern}
 
 
 def import_json(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,13 +325,6 @@ def write_csv_items(
         write_csv_items(writer, wafer, children, item["id"], path)
 
 
-def run_import_command(args: argparse.Namespace) -> None:
-    init_db(args.db)
-    with connect(args.db) as conn:
-        result = import_excel(conn, {"directory": args.directory, "pattern": args.pattern})
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-
-
 def run_server(args: argparse.Namespace) -> None:
     AppState.db_path = Path(args.db).expanduser()
     init_db(AppState.db_path)
@@ -374,11 +346,6 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--db", default=str(DEFAULT_DB))
-
-    importer = subparsers.add_parser("import-excel")
-    importer.add_argument("--db", default=str(DEFAULT_DB))
-    importer.add_argument("--directory", default=str(DEFAULT_IMPORT_DIR))
-    importer.add_argument("--pattern", default="片号N*.xlsx")
     return parser
 
 
@@ -388,10 +355,7 @@ def main() -> None:
         args = parser.parse_args(["serve"])
     else:
         args = parser.parse_args()
-    if args.command == "import-excel":
-        run_import_command(args)
-    else:
-        run_server(args)
+    run_server(args)
 
 
 if __name__ == "__main__":
