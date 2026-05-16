@@ -310,12 +310,7 @@ async function handleToolbarClick(event) {
     if (action === "copy-item") copySelectedItem();
     if (action === "paste-item") await pasteItem();
     if (action === "duplicate-wafer") await duplicateCurrentWafer();
-    if (action === "export-json-current") downloadExport("json", "current");
-    if (action === "export-csv-current") downloadExport("csv", "current");
-    if (action === "export-png-current") await exportPng("current");
-    if (action === "export-json-all") downloadExport("json", "all");
-    if (action === "export-csv-all") downloadExport("csv", "all");
-    if (action === "export-png-all") await exportPng("all");
+    if (action === "open-export") await openExportDialog();
   } catch (error) {
     showError(error);
   }
@@ -663,12 +658,18 @@ async function importJsonFiles(event) {
   showStatus("JSON 导入中");
   try {
     const parsedFiles = await Promise.all(files.map(readJsonImportFile));
+    const resolved = await resolveImportConflicts(parsedFiles);
+    if (!resolved.files.length) {
+      showStatus("已取消导入");
+      return;
+    }
     const payload = await api("/api/import/json", {
       method: "POST",
-      body: JSON.stringify({ files: parsedFiles })
+      body: JSON.stringify({ files: resolved.files, conflict_strategy: "overwrite" })
     });
     const errorText = payload.errors?.length ? `，失败 ${payload.errors.length} 个` : "";
-    showStatus(`已导入 ${payload.imported.length} 个${errorText}`);
+    const skipText = payload.skipped?.length || resolved.skipped ? `，跳过 ${(payload.skipped?.length || 0) + resolved.skipped} 个` : "";
+    showStatus(`已导入 ${payload.imported.length} 个${skipText}${errorText}`);
     await loadWafers(state.current?.id || null);
   } catch (error) {
     showError(error);
@@ -692,31 +693,376 @@ function readJsonImportFile(file) {
   });
 }
 
-function downloadExport(kind, scope = "current") {
-  const params = new URLSearchParams();
-  if (scope === "current") {
-    const waferId = state.current?.id;
-    if (!waferId) return;
-    params.set("wafer_id", waferId);
+async function resolveImportConflicts(files) {
+  const existingPayload = await api("/api/export/json");
+  const usedCodes = new Set((existingPayload.wafers || []).map((wafer) => String(wafer.wafer_code || "").trim()).filter(Boolean));
+  const plannedCodes = new Set(usedCodes);
+  const resolvedFiles = [];
+  let skipped = 0;
+  let applyAllAction = "";
+  for (const file of files) {
+    const wafers = extractImportWafers(file.payload);
+    const resolvedWafers = [];
+    for (const wafer of wafers) {
+      const code = String(wafer.wafer_code || "").trim();
+      if (!code) {
+        resolvedWafers.push(wafer);
+        continue;
+      }
+      const duplicate = plannedCodes.has(code);
+      if (!duplicate) {
+        plannedCodes.add(code);
+        resolvedWafers.push(wafer);
+        continue;
+      }
+      const decision = applyAllAction ? { action: applyAllAction, applyAll: true } : await askImportConflictDecision(code);
+      if (!decision) {
+        skipped += 1;
+        continue;
+      }
+      if (decision.applyAll) applyAllAction = decision.action;
+      if (decision.action === "skip") {
+        skipped += 1;
+        continue;
+      }
+      const copy = { ...wafer };
+      if (decision.action === "rename") {
+        copy.wafer_code = uniqueWaferCodeForImport(code, plannedCodes);
+      }
+      plannedCodes.add(copy.wafer_code);
+      resolvedWafers.push(copy);
+    }
+    if (resolvedWafers.length) {
+      resolvedFiles.push({ name: file.name, payload: { wafers: resolvedWafers } });
+    }
   }
-  const query = params.toString();
-  window.location.href = `/api/export/${kind}${query ? `?${query}` : ""}`;
+  return { files: resolvedFiles, skipped };
 }
 
-async function exportPng(scope = "current") {
-  const wafers = scope === "current" ? [state.current].filter(Boolean) : await loadAllExportWafers();
-  if (!wafers.length) return;
-  showStatus(scope === "current" ? "正在导出图片" : `正在导出 ${wafers.length} 张图片`);
-  for (const wafer of wafers) {
-    await downloadWaferPng(wafer);
-    await delay(120);
+function extractImportWafers(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && Array.isArray(payload.wafers)) return payload.wafers;
+  if (payload && typeof payload === "object") return [payload];
+  return [];
+}
+
+function uniqueWaferCodeForImport(code, usedCodes) {
+  let candidate = `${code}-2`;
+  let index = 2;
+  while (usedCodes.has(candidate)) {
+    index += 1;
+    candidate = `${code}-${index}`;
   }
-  showStatus(scope === "current" ? "图片已导出" : "批量图片已导出");
+  return candidate;
 }
 
 async function loadAllExportWafers() {
   const payload = await api("/api/export/json");
   return payload.wafers || [];
+}
+
+async function openExportDialog() {
+  const wafers = await loadAllExportWafers();
+  if (!wafers.length) {
+    showStatus("没有可导出的外延片");
+    return;
+  }
+  const currentId = state.current?.id;
+  const current = wafers.find((wafer) => wafer.id === currentId) || wafers[0];
+  const html = `
+    <div class="modal-backdrop">
+      <div class="modal-panel export-panel">
+        <div class="modal-title">
+          <h2>导出</h2>
+          <button data-modal-close title="关闭">×</button>
+        </div>
+        <label class="modal-field">
+          <span>导出格式</span>
+          <select id="exportFormat">
+            <option value="json">JSON 数据</option>
+            <option value="csv">CSV 表格</option>
+            <option value="image">结构图图片 / 多页 PDF</option>
+          </select>
+        </label>
+        <div class="modal-field">
+          <span>导出范围</span>
+          <div class="choice-row">
+            <label><input name="exportScope" type="radio" value="current" checked /> 当前片：${escapeHtml(current.wafer_code)}</label>
+            <label><input name="exportScope" type="radio" value="selected" /> 选择片号</label>
+          </div>
+        </div>
+        <div class="export-select-list" id="exportSelectList">
+          <div class="export-list-actions">
+            <button type="button" data-export-select="all">全选</button>
+            <button type="button" data-export-select="none">全不选</button>
+          </div>
+          ${wafers.map((wafer) => `
+            <label class="export-wafer-option">
+              <input type="checkbox" value="${wafer.id}" ${wafer.id === current.id ? "checked" : ""} />
+              <span>${escapeHtml(wafer.wafer_code)}</span>
+              <small>${escapeHtml(wafer.structure_name || "未命名结构")}</small>
+            </label>
+          `).join("")}
+        </div>
+        <div class="modal-actions">
+          <button data-modal-close>取消</button>
+          <button class="primary" id="confirmExportBtn">确认导出</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const modal = showModal(html);
+  const scopeInputs = modal.querySelectorAll("input[name='exportScope']");
+  const list = modal.querySelector("#exportSelectList");
+  const syncScope = () => {
+    list.classList.toggle("active", modal.querySelector("input[name='exportScope']:checked")?.value === "selected");
+  };
+  scopeInputs.forEach((input) => input.addEventListener("change", syncScope));
+  syncScope();
+  modal.querySelector("[data-export-select='all']").addEventListener("click", () => {
+    modal.querySelectorAll(".export-wafer-option input").forEach((input) => { input.checked = true; });
+  });
+  modal.querySelector("[data-export-select='none']").addEventListener("click", () => {
+    modal.querySelectorAll(".export-wafer-option input").forEach((input) => { input.checked = false; });
+  });
+  modal.querySelector("#confirmExportBtn").addEventListener("click", async () => {
+    try {
+      const format = modal.querySelector("#exportFormat").value;
+      const scope = modal.querySelector("input[name='exportScope']:checked").value;
+      const selected = scope === "current"
+        ? [current]
+        : wafers.filter((wafer) => modal.querySelector(`.export-wafer-option input[value="${wafer.id}"]`)?.checked);
+      if (!selected.length) {
+        showStatus("请选择至少一片");
+        return;
+      }
+      closeModal(modal);
+      await runExport(format, selected);
+    } catch (error) {
+      showError(error);
+    }
+  });
+}
+
+async function runExport(format, wafers) {
+  if (format === "json") {
+    downloadBlob(JSON.stringify({ wafers }, null, 2), "mbe-wafers.json", "application/json;charset=utf-8");
+    showStatus(`已导出 ${wafers.length} 片 JSON`);
+    return;
+  }
+  if (format === "csv") {
+    downloadBlob(csvForWafers(wafers), "mbe-structure.csv", "text/csv;charset=utf-8");
+    showStatus(`已导出 ${wafers.length} 片 CSV`);
+    return;
+  }
+  if (wafers.length === 1) {
+    await downloadWaferPng(wafers[0]);
+    showStatus("当前片图片已导出");
+    return;
+  }
+  await downloadWafersPdf(wafers);
+  showStatus(`已导出 ${wafers.length} 片结构图 PDF`);
+}
+
+function askImportConflictDecision(waferCode) {
+  return new Promise((resolve) => {
+    const modal = showModal(`
+      <div class="modal-backdrop">
+        <div class="modal-panel">
+          <div class="modal-title">
+            <h2>片号重复</h2>
+            <button data-modal-close title="关闭">×</button>
+          </div>
+          <p class="modal-copy">导入文件里有片号 <strong>${escapeHtml(waferCode)}</strong>，本地已经存在。</p>
+          <div class="choice-grid">
+            <label><input name="importConflictAction" type="radio" value="overwrite" checked /> 覆盖本地这片</label>
+            <label><input name="importConflictAction" type="radio" value="rename" /> 自动重命名为唯一片号</label>
+            <label><input name="importConflictAction" type="radio" value="skip" /> 跳过这片</label>
+          </div>
+          <label class="modal-check">
+            <input id="applyImportConflictAll" type="checkbox" />
+            后续重复片号都这样处理
+          </label>
+          <div class="modal-actions">
+            <button data-modal-close>取消这片</button>
+            <button class="primary" id="confirmImportConflictBtn">继续导入</button>
+          </div>
+        </div>
+      </div>
+    `, () => resolve(null));
+    modal.querySelector("#confirmImportConflictBtn").addEventListener("click", () => {
+      const action = modal.querySelector("input[name='importConflictAction']:checked").value;
+      const applyAll = modal.querySelector("#applyImportConflictAll").checked;
+      closeModal(modal);
+      resolve({ action, applyAll });
+    });
+  });
+}
+
+function csvForWafers(wafers) {
+  const rows = [[
+    "wafer_code",
+    "size",
+    "structure_name",
+    "path",
+    "type",
+    "layer_name",
+    "material",
+    "thickness_nm",
+    "periods",
+    "single_period_thickness_nm",
+    "doping",
+    "growth_temp",
+    "is_quantum_dot",
+    "notes"
+  ]];
+  wafers.forEach((wafer) => {
+    const map = childMapForItems(wafer.items || []);
+    writeCsvItemRows(rows, wafer, map, null, "");
+  });
+  return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`;
+}
+
+function writeCsvItemRows(rows, wafer, map, parentId, prefix) {
+  (map.get(parentId) || []).forEach((item, index) => {
+    const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+    rows.push([
+      wafer.wafer_code,
+      wafer.size,
+      wafer.structure_name,
+      path,
+      item.item_type,
+      item.layer_name,
+      item.material,
+      blankNumber(item.thickness_nm),
+      blankNumber(item.periods),
+      blankNumber(item.single_period_thickness_nm),
+      item.doping,
+      item.growth_temp,
+      item.is_quantum_dot,
+      item.notes
+    ]);
+    writeCsvItemRows(rows, wafer, map, item.id, path);
+  });
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+async function downloadWafersPdf(wafers) {
+  showStatus(`正在生成 ${wafers.length} 页 PDF`);
+  const pages = [];
+  for (const wafer of wafers) {
+    const canvas = renderWaferPngCanvas(wafer);
+    const jpeg = await canvasToJpegBytes(canvas);
+    pages.push({ wafer, jpeg, width: canvas.width, height: canvas.height });
+  }
+  const pdf = buildImagePdf(pages);
+  downloadBlob(pdf, "mbe-structure-images.pdf", "application/pdf");
+}
+
+async function canvasToJpegBytes(canvas) {
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+  if (!blob) throw new Error("PDF 图片生成失败");
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+function buildImagePdf(pages) {
+  const encoder = new TextEncoder();
+  const objects = [];
+  const kids = [];
+  const addObject = (chunks) => {
+    objects.push(chunks);
+    return objects.length;
+  };
+  addObject([]);
+  addObject([]);
+  pages.forEach((page, index) => {
+    const pageWidth = 595;
+    const pageHeight = Math.max(300, Math.round((page.height / page.width) * pageWidth));
+    const imageName = `Im${index + 1}`;
+    const imageObj = addObject([
+      `<< /Type /XObject /Subtype /Image /Width ${page.width} /Height ${page.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${page.jpeg.length} >>\nstream\n`,
+      page.jpeg,
+      "\nendstream"
+    ]);
+    const content = `q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/${imageName} Do\nQ\n`;
+    const contentBytes = encoder.encode(content);
+    const contentObj = addObject([
+      `<< /Length ${contentBytes.length} >>\nstream\n`,
+      contentBytes,
+      "endstream"
+    ]);
+    const pageObj = addObject([
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /${imageName} ${imageObj} 0 R >> >> /Contents ${contentObj} 0 R >>`
+    ]);
+    kids.push(`${pageObj} 0 R`);
+  });
+  objects[0] = ["<< /Type /Catalog /Pages 2 0 R >>"];
+  objects[1] = [`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${kids.length} >>`];
+
+  const chunks = [encoder.encode("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n")];
+  const offsets = [0];
+  let length = chunks[0].length;
+  objects.forEach((object, index) => {
+    offsets[index + 1] = length;
+    const header = encoder.encode(`${index + 1} 0 obj\n`);
+    chunks.push(header);
+    length += header.length;
+    object.forEach((chunk) => {
+      const bytes = typeof chunk === "string" ? encoder.encode(chunk) : chunk;
+      chunks.push(bytes);
+      length += bytes.length;
+    });
+    const footer = encoder.encode("\nendobj\n");
+    chunks.push(footer);
+    length += footer.length;
+  });
+  const xrefOffset = length;
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let index = 1; index <= objects.length; index += 1) {
+    xref += `${String(offsets[index]).padStart(10, "0")} 00000 n \n`;
+  }
+  xref += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  chunks.push(encoder.encode(xref));
+  return new Blob(chunks, { type: "application/pdf" });
+}
+
+function showModal(html, onClose = null) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = html.trim();
+  const modal = wrapper.firstElementChild;
+  document.body.appendChild(modal);
+  modal.querySelectorAll("[data-modal-close]").forEach((button) => {
+    button.addEventListener("click", () => {
+      closeModal(modal);
+      if (onClose) onClose();
+    });
+  });
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal) {
+      closeModal(modal);
+      if (onClose) onClose();
+    }
+  });
+  return modal;
+}
+
+function closeModal(modal) {
+  modal.remove();
 }
 
 async function downloadWaferPng(wafer) {

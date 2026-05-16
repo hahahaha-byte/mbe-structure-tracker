@@ -721,7 +721,7 @@ def import_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], items: It
     return get_wafer(conn, wafer_id)
 
 
-def import_json_wafers(conn: sqlite3.Connection, payload: Any) -> Dict[str, Any]:
+def import_json_wafers(conn: sqlite3.Connection, payload: Any, conflict_strategy: str = "overwrite") -> Dict[str, Any]:
     if isinstance(payload, dict) and "wafers" in payload:
         wafers = payload.get("wafers") or []
     elif isinstance(payload, list):
@@ -733,17 +733,21 @@ def import_json_wafers(conn: sqlite3.Connection, payload: Any) -> Dict[str, Any]
 
     imported = []
     errors = []
+    skipped = []
     for index, wafer_data in enumerate(wafers, start=1):
         try:
-            wafer = import_json_wafer(conn, wafer_data)
-            imported.append({"wafer_code": wafer["wafer_code"], "item_count": len(wafer["items"])})
+            wafer = import_json_wafer(conn, wafer_data, conflict_strategy)
+            if wafer:
+                imported.append({"wafer_code": wafer["wafer_code"], "item_count": len(wafer["items"])})
+            else:
+                skipped.append({"wafer_code": clean_text(wafer_data.get("wafer_code"))})
         except Exception as exc:
             label = wafer_data.get("wafer_code") if isinstance(wafer_data, dict) else f"#{index}"
             errors.append({"wafer_code": label or f"#{index}", "error": str(exc)})
-    return {"imported": imported, "errors": errors}
+    return {"imported": imported, "errors": errors, "skipped": skipped}
 
 
-def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any]) -> Dict[str, Any]:
+def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conflict_strategy: str = "overwrite") -> Optional[Dict[str, Any]]:
     if not isinstance(wafer_data, dict):
         raise ValueError("wafer_payload_invalid")
     code = clean_text(wafer_data.get("wafer_code"))
@@ -752,6 +756,12 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any]) -> D
 
     now = utc_now()
     existing = row_to_dict(conn.execute("SELECT * FROM wafer WHERE wafer_code = ?", (code,)).fetchone())
+    strategy = conflict_strategy if conflict_strategy in {"overwrite", "rename", "skip"} else "overwrite"
+    if existing and strategy == "skip":
+        return None
+    if existing and strategy == "rename":
+        code = unique_wafer_code(conn, code)
+        existing = None
     if existing:
         wafer_id = int(existing["id"])
         conn.execute(

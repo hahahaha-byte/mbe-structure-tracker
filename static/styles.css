@@ -776,6 +776,146 @@ input:focus {
   gap: 12px;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 32, 29, 0.28);
+}
+
+.modal-panel {
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 20px 70px rgba(24, 32, 29, 0.22);
+  padding: 16px;
+}
+
+.export-panel {
+  width: min(720px, 100%);
+}
+
+.modal-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-title h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal-title button {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.modal-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.modal-field > span,
+.modal-copy,
+.modal-check {
+  color: var(--muted);
+}
+
+.modal-field select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  padding: 6px 8px;
+  font: inherit;
+}
+
+.choice-row,
+.choice-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.choice-row label,
+.choice-grid label,
+.modal-check,
+.export-wafer-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.choice-row input,
+.choice-grid input,
+.modal-check input,
+.export-wafer-option input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.export-select-list {
+  display: none;
+  margin: 8px 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fcfdfb;
+  padding: 8px;
+}
+
+.export-select-list.active {
+  display: grid;
+  gap: 4px;
+}
+
+.export-list-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.export-wafer-option {
+  border-radius: 6px;
+  padding: 5px 6px;
+}
+
+.export-wafer-option:hover {
+  background: var(--panel-muted);
+}
+
+.export-wafer-option span {
+  font-weight: 700;
+}
+
+.export-wafer-option small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

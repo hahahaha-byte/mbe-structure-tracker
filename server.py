@@ -256,21 +256,25 @@ def import_excel(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
 
 def import_json(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
     files = body.get("files")
+    conflict_strategy = body.get("conflict_strategy") or "overwrite"
     if not files:
-        result = import_json_wafers(conn, body.get("payload", body))
-        return {"imported": result["imported"], "errors": result["errors"]}
+        result = import_json_wafers(conn, body.get("payload", body), conflict_strategy)
+        return {"imported": result["imported"], "errors": result["errors"], "skipped": result.get("skipped", [])}
 
     imported = []
     errors = []
+    skipped = []
     for file_info in files:
         name = file_info.get("name") or "json"
         try:
-            result = import_json_wafers(conn, file_info.get("payload"))
+            strategy = file_info.get("conflict_strategy") or conflict_strategy
+            result = import_json_wafers(conn, file_info.get("payload"), strategy)
             imported.extend([{**item, "file": name} for item in result["imported"]])
             errors.extend([{**item, "file": name} for item in result["errors"]])
+            skipped.extend([{**item, "file": name} for item in result.get("skipped", [])])
         except Exception as exc:
             errors.append({"file": name, "error": str(exc)})
-    return {"imported": imported, "errors": errors}
+    return {"imported": imported, "errors": errors, "skipped": skipped}
 
 
 def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
