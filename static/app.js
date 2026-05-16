@@ -1248,9 +1248,12 @@ function drawCanvasSegment(ctx, part, map, x, y, width, height) {
   if (repeat) drawRepeatPattern(ctx, x, y, width, height);
   ctx.strokeStyle = "rgba(24,32,29,0.16)";
   ctx.strokeRect(x, y, width, height);
-  if (part.qdMarkers.length) drawQdDotsCanvas(ctx, x + 12, y + height - 17, width - 24, part.qdMarkers);
-  drawSegmentText(ctx, item.layer_name || item.material || "未命名层", stackMeta(item, part.computed, map, part.qdMarkers), x, y, width, height);
-  if (hasDoping(item)) drawDopedBadge(ctx, x + width - 30, y + height / 2);
+  const doped = hasDoping(item);
+  const qdLane = part.qdMarkers.length ? qdLaneRect(x, y, width, height, doped) : null;
+  const reserveRight = qdLane ? width - (qdLane.x - x) + 8 : doped ? 48 : 24;
+  drawSegmentText(ctx, item.layer_name || item.material || "未命名层", stackMeta(item, part.computed, map, part.qdMarkers), x, y, width, height, reserveRight);
+  if (qdLane) drawQdLaneCanvas(ctx, qdLane.x, qdLane.y, qdLane.width, qdLane.height, part.qdMarkers);
+  if (doped) drawDopedBadge(ctx, x + width - 30, y + height / 2);
   if (repeat && childParts.length) {
     const childHeight = stackLayoutHeight(childParts, STACK_REPEAT_CHILD_GAP);
     drawStackParts(
@@ -1271,23 +1274,47 @@ function drawQdMarkerSegment(ctx, item, x, y, width, height) {
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "rgba(191,77,111,0.35)";
   ctx.strokeRect(x, y, width, height);
-  drawQdDotsCanvas(ctx, x + 12, y + Math.max(6, height - 16), width - 24, [item]);
-  drawSegmentText(ctx, item.layer_name || item.material || "QD", stackMeta(item, { thickness: 0 }, new Map()), x, y, width, height);
+  const qdLane = qdLaneRect(x, y, width, height, false);
+  drawSegmentText(ctx, item.layer_name || item.material || "QD", stackMeta(item, { thickness: 0 }, new Map()), x, y, width, height, width - (qdLane.x - x) + 8);
+  drawQdLaneCanvas(ctx, qdLane.x, qdLane.y, qdLane.width, qdLane.height, [item]);
 }
 
-function drawSegmentText(ctx, name, meta, x, y, width, height) {
+function drawSegmentText(ctx, name, meta, x, y, width, height, reserveRight = 48) {
   ctx.save();
   ctx.beginPath();
-  ctx.rect(x + 8, y + 2, width - 56, height - 4);
+  const textWidth = Math.max(32, width - reserveRight - 14);
+  ctx.rect(x + 8, y + 2, textWidth, height - 4);
   ctx.clip();
   ctx.fillStyle = "#121714";
   ctx.font = "700 16px sans-serif";
-  ctx.fillText(name, x + 14, y + Math.min(24, Math.max(18, height / 2)));
+  ctx.fillText(name, x + 14, y + Math.min(24, Math.max(18, height / 2)), textWidth - 6);
   if (height >= 42) {
     ctx.fillStyle = "rgba(24,32,29,0.72)";
     ctx.font = "14px sans-serif";
-    ctx.fillText(meta, x + 14, y + Math.min(46, Math.max(34, height / 2 + 18)));
+    ctx.fillText(meta, x + 14, y + Math.min(46, Math.max(34, height / 2 + 18)), textWidth - 6);
   }
+  ctx.restore();
+}
+
+function qdLaneRect(x, y, width, height, doped = false) {
+  const laneWidth = Math.min(220, Math.max(92, width * 0.32));
+  const rightReserve = doped ? 42 : 10;
+  return {
+    x: x + width - laneWidth - rightReserve,
+    y: y + Math.max(4, Math.min(10, height * 0.18)),
+    width: laneWidth,
+    height: Math.max(18, height - Math.max(8, Math.min(20, height * 0.36)))
+  };
+}
+
+function drawQdLaneCanvas(ctx, x, y, width, height, items) {
+  ctx.save();
+  roundedRect(ctx, x, y, width, height, Math.min(12, height / 2));
+  ctx.fillStyle = "rgba(255,247,250,0.78)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(191,77,111,0.16)";
+  ctx.stroke();
+  drawQdDotsCanvas(ctx, x + 6, y + height / 2 - 5, width - 12, items);
   ctx.restore();
 }
 
@@ -1582,11 +1609,13 @@ function renderStackSegment(part, map, depth) {
   ].filter(Boolean).join(" ");
   return `
     <div class="${classes}" style="height:${height}px; min-height:${height}px; background-color:${color}; --stack-depth:${depth}">
-      <div class="segment-header">
-        <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
-        <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, part.qdMarkers))}</div>
+      <div class="segment-body">
+        <div class="segment-header">
+          <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
+          <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, part.qdMarkers))}</div>
+        </div>
+        ${qdCap ? renderQdDots(part.qdMarkers) : ""}
       </div>
-      ${qdCap ? renderQdDots(part.qdMarkers) : ""}
       ${hasChildren ? `<div class="repeat-children">${childHtml}</div>` : ""}
     </div>
   `;
@@ -1601,10 +1630,12 @@ function renderQdMarker(item, depth, height = STACK_MIN_QD_HEIGHT) {
   const color = materialColor(item.material || item.layer_name || "QD");
   return `
     <div class="stack-segment qd-marker compact" style="height:${height}px; min-height:${height}px; background-color:${color}; --stack-depth:${depth}">
-      <div class="qd-dots"></div>
-      <div class="segment-header">
-        <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
-        <div class="segment-meta">${escapeHtml(stackMeta(item, { thickness: 0 }, new Map()))}</div>
+      <div class="segment-body">
+        <div class="segment-header">
+          <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
+          <div class="segment-meta">${escapeHtml(stackMeta(item, { thickness: 0 }, new Map()))}</div>
+        </div>
+        <div class="qd-dots"></div>
       </div>
     </div>
   `;
