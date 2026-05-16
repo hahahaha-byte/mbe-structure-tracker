@@ -250,7 +250,7 @@ input:focus {
 
 .layer-table {
   width: 100%;
-  min-width: 1120px;
+  min-width: 1180px;
   border-collapse: separate;
   border-spacing: 0;
   --row-swap-distance: 46px;
@@ -363,7 +363,7 @@ input:focus {
 }
 
 .actions-col {
-  width: 220px;
+  width: 240px;
 }
 
 .row-actions {
@@ -373,7 +373,7 @@ input:focus {
 }
 
 .action-cell {
-  min-width: calc(188px + var(--level-offset, 0px));
+  min-width: calc(216px + var(--level-offset, 0px));
 }
 
 .tree-actions {
@@ -501,6 +501,7 @@ input:focus {
 
 .shortcuts {
   padding: 10px 12px 12px;
+  overflow-x: auto;
 }
 
 .section-title {
@@ -518,8 +519,20 @@ input:focus {
 
 .shortcut-grid {
   display: grid;
-  grid-template-columns: 90px minmax(120px, 1fr) minmax(160px, 1.4fr) 92px minmax(150px, 1.4fr) 88px;
+  grid-template-columns:
+    minmax(110px, 1fr)
+    minmax(150px, 1.3fr)
+    105px
+    72px
+    96px
+    minmax(150px, 1.3fr)
+    104px
+    46px
+    minmax(120px, 1fr)
+    124px;
   gap: 6px;
+  min-width: 1180px;
+  align-items: center;
 }
 
 .shortcut-grid input {
@@ -532,6 +545,21 @@ input:focus {
   font-weight: 700;
 }
 
+.shortcut-check {
+  min-height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #fff;
+}
+
+.shortcut-check input {
+  width: 18px;
+  min-height: 18px;
+  padding: 0;
+}
+
 .quick-apply {
   background: var(--accent-soft);
   border-color: rgba(11, 118, 110, 0.25);
@@ -540,12 +568,26 @@ input:focus {
 
 .shortcut-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
 }
 
 .shortcut-actions button {
   min-height: 30px;
   padding: 0 8px;
+}
+
+.shortcut-tree-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgba(92, 109, 57, 0.12);
+  color: var(--repeat);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 #undoDeleteBtn:not(:disabled) {
@@ -830,5 +872,9 @@ input:focus {
   .inspector {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .shortcut-grid {
+    min-width: 0;
   }
 }

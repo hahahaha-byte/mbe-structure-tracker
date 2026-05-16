@@ -14,12 +14,12 @@ const state = {
 };
 
 const DEFAULT_SHORTCUTS = [
-  { label: "GaAs", layer_name: "", material: "GaAs", thickness_nm: "", doping: "" },
-  { label: "AlGaAs", layer_name: "", material: "AlGaAs", thickness_nm: "", doping: "" },
-  { label: "接触层", layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", doping: "1E19" },
-  { label: "波导", layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", doping: "" },
-  { label: "Be", layer_name: "", material: "", thickness_nm: "", doping: "Be-doping 10hole/dot" },
-  { label: "Si", layer_name: "", material: "", thickness_nm: "", doping: "Si-doping" }
+  { layer_name: "", material: "GaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "AlGaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", periods: "", single_period_thickness_nm: "", doping: "1E19", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Be-doping 10hole/dot", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Si-doping", growth_temp: "", is_quantum_dot: 0, notes: "" }
 ];
 
 const STACK_VIEW_HEIGHT = 470;
@@ -74,6 +74,7 @@ function bindEvents() {
   els.layerTableBody.addEventListener("input", handleItemInput);
   els.layerTableBody.addEventListener("change", handleItemInput);
   els.shortcutList.addEventListener("input", handleShortcutInput);
+  els.shortcutList.addEventListener("change", handleShortcutInput);
   els.shortcutList.addEventListener("click", handleShortcutClick);
 
   Object.values(els.waferFields).forEach((input) => {
@@ -197,25 +198,25 @@ function renderItemRow(item, depth, map) {
   const materialDisabled = repeat && hasNestedRows;
   const dopingDisabled = repeat && hasNestedRows;
   const qdDisabled = repeat && hasNestedRows;
-  const rowLabel = repeat ? "重复层" : depth > 0 ? "内部层" : "层";
+  const rowLabel = repeat ? "重复层" : depth > 0 ? "子层" : "层";
   const rowClass = repeat ? "repeat-row" : child;
   const depthClass = depth > 0 ? "nested-row" : "root-row";
   const animationClass = rowAnimationClass(item);
   const levelOffset = depth * 32;
   const railOffset = Math.max(0, levelOffset - 16);
   const materialCell = materialDisabled
-    ? lockedCell("展开内部层，在内部层里填写具体材料", "展开内部层填写")
+    ? lockedCell("展开子层，在子层里填写具体材料", "展开子层填写")
     : `<input data-field="material" value="${escapeAttr(item.material)}" />`;
   const thicknessCell = repeat
-    ? lockedCell("重复层厚度由周期和内部层自动计算", `自动 ${formatNumber(computed.thickness)}`)
+    ? lockedCell("重复层厚度由周期和子层自动计算", `自动 ${formatNumber(computed.thickness)}`)
     : `<input data-field="thickness_nm" class="${item.is_quantum_dot ? "qd-growth-input" : ""}" value="${escapeAttr(blankNumber(item.thickness_nm))}" placeholder="${item.is_quantum_dot ? "如 2.3ML" : "nm"}" />`;
   const singlePeriodCell = hasNestedRows
-    ? lockedCell("单周期厚度由内部层自动相加", `自动 ${formatNumber(periodThickness)}`)
+    ? lockedCell("单周期厚度由子层自动相加", `自动 ${formatNumber(periodThickness)}`)
     : repeat
       ? `<input data-field="single_period_thickness_nm" value="${escapeAttr(blankNumber(item.single_period_thickness_nm))}" />`
       : lockedCell("先在“周期”里填大于 1 的数字，再填写单周期厚度", "先填周期");
   const dopingCell = dopingDisabled
-    ? lockedCell("展开内部层，在具体内部层里填写掺杂", "展开内部层填写")
+    ? lockedCell("展开子层，在具体子层里填写掺杂", "展开子层填写")
     : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`;
   return `
     <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
@@ -225,7 +226,8 @@ function renderItemRow(item, depth, map) {
           <button data-action="toggle-expand" title="${expanded ? "收起" : "展开"}" ${repeat ? "" : "disabled"}>${repeat ? (expanded ? "▾" : "▸") : "·"}</button>
           <button data-action="move-up" title="上移">↑</button>
           <button data-action="move-down" title="下移">↓</button>
-          <button data-action="add-inner-row" title="添加内部层" ${repeat ? "" : "disabled"}>+</button>
+          <button data-action="add-inner-row" title="添加子层" ${repeat ? "" : "disabled"}>+</button>
+          <button data-action="save-shortcut" title="加入快捷项">☆</button>
           <button data-action="delete-item" title="删除">×</button>
         </div>
       </td>
@@ -342,6 +344,10 @@ async function handleTableClick(event) {
     if (action === "add-inner-row") {
       selectItem(id);
       await addInnerLayer();
+    }
+    if (action === "save-shortcut") {
+      markSelectedRow(id);
+      saveItemAsShortcut(id);
     }
     if (action === "move-up" || action === "move-down") {
       const direction = action === "move-up" ? "up" : "down";
@@ -508,7 +514,7 @@ async function addInnerLayer() {
     body: JSON.stringify({
       ...reference.payload,
       item_type: "layer",
-      layer_name: "内部层",
+      layer_name: "子层",
       material: "",
       thickness_nm: 0
     })
@@ -917,7 +923,7 @@ function stackMeta(item, computed, map, qdMarkers = []) {
   const qdText = qdMarkers.length ? ` · QD ${qdMarkers.map(qdGrowthText).filter(Boolean).join(" + ") || "标记"}` : "";
   if (isRepeatItem(item, map)) {
     const childCount = (map.get(item.id) || []).length;
-    return `${item.periods || 1}x · ${childCount ? `${childCount} 内部层 · ` : material ? `${material} · ` : ""}${thickness}${qdText}`;
+    return `${item.periods || 1}x · ${childCount ? `${childCount} 子层 · ` : material ? `${material} · ` : ""}${thickness}${qdText}`;
   }
   if (isQuantumDot(item)) {
     const growth = qdGrowthText(item);
@@ -1060,29 +1066,53 @@ function saveShortcuts() {
 }
 
 function normalizeShortcut(shortcut) {
+  const legacyLabel = shortcut.label || shortcut.key || "";
+  const layerName = shortcut.layer_name || (
+    !shortcut.material && !shortcut.thickness_nm && !shortcut.doping && legacyLabel ? legacyLabel : ""
+  );
   return {
-    label: shortcut.label || shortcut.key || shortcut.material || "快捷项",
-    layer_name: shortcut.layer_name || "",
+    item_type: shortcut.item_type || (numberValue(shortcut.periods) > 1 && !shortcut.is_quantum_dot ? "repeat" : "layer"),
+    layer_name: layerName,
     material: shortcut.material || "",
     thickness_nm: shortcut.thickness_nm || "",
-    doping: shortcut.doping || ""
+    periods: shortcut.periods || "",
+    single_period_thickness_nm: shortcut.single_period_thickness_nm || "",
+    doping: shortcut.doping || "",
+    growth_temp: shortcut.growth_temp || "",
+    is_quantum_dot: shortcut.is_quantum_dot ? 1 : 0,
+    notes: shortcut.notes || "",
+    children: (shortcut.children || []).map(normalizeShortcut)
   };
 }
 
 function renderShortcuts() {
-  const header = ["名称", "层名", "材料", "厚度", "掺杂", "操作"].map((label) => `<div class="grid-label">${label}</div>`).join("");
+  const header = ["层名", "材料", "厚度 nm / QD ML", "周期", "单周期 nm", "掺杂浓度", "生长温度", "QD", "备注", "操作"]
+    .map((label) => `<div class="grid-label">${label}</div>`)
+    .join("");
   const rows = state.shortcuts
-    .map((shortcut, index) => `
-      <input data-shortcut-index="${index}" data-shortcut-field="label" value="${escapeAttr(shortcut.label)}" />
+    .map((shortcut, index) => {
+      const childCount = shortcutChildCount(shortcut);
+      const insertTitle = childCount ? `在选中层上方插入完整结构，含 ${childCount} 个子层` : "在选中层上方插入";
+      const removeTitle = childCount ? "删除这个快捷结构" : "删除这个快捷项";
+      return `
       <input data-shortcut-index="${index}" data-shortcut-field="layer_name" value="${escapeAttr(shortcut.layer_name)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="material" value="${escapeAttr(shortcut.material)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="thickness_nm" value="${escapeAttr(shortcut.thickness_nm)}" />
+      <input data-shortcut-index="${index}" data-shortcut-field="periods" value="${escapeAttr(shortcut.periods)}" />
+      <input data-shortcut-index="${index}" data-shortcut-field="single_period_thickness_nm" value="${escapeAttr(shortcut.single_period_thickness_nm)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="doping" value="${escapeAttr(shortcut.doping)}" />
+      <input data-shortcut-index="${index}" data-shortcut-field="growth_temp" value="${escapeAttr(shortcut.growth_temp)}" />
+      <label class="shortcut-check" title="量子点层">
+        <input data-shortcut-index="${index}" data-shortcut-field="is_quantum_dot" type="checkbox" ${shortcut.is_quantum_dot ? "checked" : ""} />
+      </label>
+      <input data-shortcut-index="${index}" data-shortcut-field="notes" value="${escapeAttr(shortcut.notes)}" />
       <div class="shortcut-actions">
-        <button class="quick-apply" data-shortcut-action="insert" data-shortcut-index="${index}" title="在选中层上方插入">+</button>
-        <button data-shortcut-action="remove" data-shortcut-index="${index}">×</button>
+        ${childCount ? `<span class="shortcut-tree-badge" title="含 ${childCount} 个子层">结构</span>` : ""}
+        <button class="quick-apply" data-shortcut-action="insert" data-shortcut-index="${index}" title="${escapeAttr(insertTitle)}">+</button>
+        <button data-shortcut-action="remove" data-shortcut-index="${index}" title="${escapeAttr(removeTitle)}">×</button>
       </div>
-    `)
+    `;
+    })
     .join("");
   els.shortcutList.innerHTML = header + rows;
 }
@@ -1092,7 +1122,7 @@ function handleShortcutInput(event) {
   if (!input || !input.dataset.shortcutField) return;
   const index = Number(input.dataset.shortcutIndex);
   const field = input.dataset.shortcutField;
-  state.shortcuts[index][field] = input.value;
+  state.shortcuts[index][field] = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
   saveShortcuts();
 }
 
@@ -1112,7 +1142,7 @@ function handleShortcutClick(event) {
 }
 
 function addShortcut() {
-  state.shortcuts.push({ label: "新项", layer_name: "", material: "", thickness_nm: "", doping: "" });
+  state.shortcuts.push(normalizeShortcut({ layer_name: "新层" }));
   saveShortcuts();
   renderShortcuts();
 }
@@ -1123,24 +1153,85 @@ async function insertShortcutLayer(shortcut) {
     return;
   }
   const target = insertionTargetItem() || firstVisibleItem();
-  const payload = {
-    item_type: "layer",
-    ...insertionReference(target).payload,
-    layer_name: shortcut.layer_name || shortcut.label || "新层",
-    material: shortcut.material || "",
-    thickness_nm: shortcut.thickness_nm || 0,
-    doping: shortcut.doping || ""
-  };
-  const result = await api(`/api/wafers/${state.current.id}/items`, {
+  const tree = shortcutTreeForInsert(shortcut, target);
+  const result = await api(`/api/wafers/${state.current.id}/restore`, {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ tree })
   });
   state.selectedItemId = result.item.id;
   state.insertTargetItemId = result.item.id;
   await ensureItemBefore(result.item.id, target?.id || null);
   queueRowAnimation(result.item.id, "insert");
   await loadWafer(state.current.id);
-  showStatus(`${shortcut.label || "快捷项"} 已插入为新层`);
+  showStatus(`${shortcutTitle(shortcut)} 已插入`);
+}
+
+function shortcutTitle(shortcut) {
+  return shortcut.layer_name || shortcut.material || shortcut.doping || shortcut.growth_temp || shortcut.notes || "快捷项";
+}
+
+function shortcutChildCount(shortcut) {
+  return (shortcut.children || []).reduce((count, child) => count + 1 + shortcutChildCount(child), 0);
+}
+
+function saveItemAsShortcut(itemId) {
+  if (!state.current) return;
+  const map = childMap();
+  const item = state.current.items.find((candidate) => candidate.id === itemId);
+  if (!item) return;
+  const shortcut = itemToShortcut(item, map);
+  state.shortcuts.push(shortcut);
+  saveShortcuts();
+  renderShortcuts();
+  const childCount = shortcutChildCount(shortcut);
+  showStatus(`${shortcutTitle(shortcut)} 已加入快捷项${childCount ? `，含 ${childCount} 个子层` : ""}`);
+}
+
+function itemToShortcut(item, map) {
+  return normalizeShortcut({
+    item_type: isRepeatItem(item, map) ? "repeat" : "layer",
+    layer_name: item.layer_name || "",
+    material: item.material || "",
+    thickness_nm: blankNumber(item.thickness_nm),
+    periods: blankNumber(item.periods),
+    single_period_thickness_nm: blankNumber(item.single_period_thickness_nm),
+    doping: item.doping || "",
+    growth_temp: item.growth_temp || "",
+    is_quantum_dot: item.is_quantum_dot ? 1 : 0,
+    notes: item.notes || "",
+    children: (map.get(item.id) || []).map((child) => itemToShortcut(child, map))
+  });
+}
+
+function shortcutTreeForInsert(shortcut, target) {
+  const tree = shortcutToTree(shortcut);
+  if (target) {
+    tree.parent_id = target.parent_id ?? null;
+    tree.order_index = target.order_index;
+  } else {
+    tree.parent_id = null;
+    delete tree.order_index;
+  }
+  return tree;
+}
+
+function shortcutToTree(shortcut) {
+  const normalized = normalizeShortcut(shortcut);
+  const isQd = Boolean(normalized.is_quantum_dot);
+  const periods = numberValue(normalized.periods);
+  return {
+    item_type: periods > 1 && !isQd ? "repeat" : normalized.item_type || "layer",
+    layer_name: normalized.layer_name || "新层",
+    material: normalized.material || "",
+    thickness_nm: isQd ? normalized.thickness_nm : normalized.thickness_nm || 0,
+    periods: normalized.periods || "",
+    single_period_thickness_nm: normalized.single_period_thickness_nm || "",
+    doping: normalized.doping || "",
+    growth_temp: normalized.growth_temp || "",
+    is_quantum_dot: isQd ? 1 : 0,
+    notes: normalized.notes || "",
+    children: (normalized.children || []).map(shortcutToTree)
+  };
 }
 
 function pickWaferFields(wafer) {
