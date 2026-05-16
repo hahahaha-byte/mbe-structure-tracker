@@ -1299,11 +1299,13 @@ function drawSegmentText(ctx, name, meta, x, y, width, height, reserveRight = 48
 function qdLaneRect(x, y, width, height, doped = false) {
   const laneWidth = Math.min(150, Math.max(72, width * 0.24));
   const rightReserve = doped ? 42 : 10;
+  const laneHeight = 13;
+  const bottomGap = Math.max(4, Math.min(7, height * 0.12));
   return {
     x: x + width - laneWidth - rightReserve,
-    y: y + Math.max(4, Math.min(10, height * 0.18)),
+    y: y + Math.max(3, height - laneHeight - bottomGap),
     width: laneWidth,
-    height: Math.max(18, height - Math.max(8, Math.min(20, height * 0.36)))
+    height: laneHeight
   };
 }
 
