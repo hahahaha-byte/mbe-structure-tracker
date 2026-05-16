@@ -388,11 +388,12 @@ async function createNewWafer() {
 
 async function addLayer() {
   const target = insertionTargetItem() || firstVisibleItem();
+  const reference = insertionReference(target);
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
       item_type: "layer",
-      before_id: target?.id || null,
+      ...reference.payload,
       layer_name: "新层",
       material: "",
       thickness_nm: 0
@@ -400,6 +401,7 @@ async function addLayer() {
   });
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
+  await ensureItemBefore(payload.item.id, target?.id || null);
   await loadWafer(state.current.id);
 }
 
@@ -407,12 +409,12 @@ async function addInnerLayer() {
   const selected = insertionTargetItem();
   const map = childMap();
   let parent = selected && isRepeatItem(selected, map) ? selected : null;
-  let beforeId = null;
+  let beforeTarget = null;
   if (!parent && selected?.parent_id) {
     const maybeParent = state.current.items.find((item) => item.id === selected.parent_id);
     if (maybeParent && isRepeatItem(maybeParent, map)) {
       parent = maybeParent;
-      beforeId = selected.id;
+      beforeTarget = selected;
     }
   }
   if (!parent && selected && numberValue(selected.periods) > 1) {
@@ -434,14 +436,14 @@ async function addInnerLayer() {
   parent.is_quantum_dot = 0;
   scheduleItemSave(parent);
   state.collapsedItemIds.delete(parent.id);
-  if (!beforeId) {
-    beforeId = (map.get(parent.id) || [])[0]?.id || null;
+  if (!beforeTarget) {
+    beforeTarget = (map.get(parent.id) || [])[0] || null;
   }
+  const reference = insertionReference(beforeTarget, parent.id);
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
-      parent_id: parent.id,
-      before_id: beforeId,
+      ...reference.payload,
       item_type: "layer",
       layer_name: "内部层",
       material: "",
@@ -450,6 +452,7 @@ async function addInnerLayer() {
   });
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
+  await ensureItemBefore(payload.item.id, beforeTarget?.id || null);
   await loadWafer(state.current.id);
 }
 
@@ -551,15 +554,17 @@ async function pasteItem() {
     return;
   }
   const target = insertionTargetItem() || firstVisibleItem();
+  const reference = insertionReference(target);
   const payload = await api(`/api/wafers/${state.current.id}/paste`, {
     method: "POST",
     body: JSON.stringify({
       source_item_id: state.copiedItemId,
-      before_id: target?.id || null
+      ...reference.payload
     })
   });
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
+  await ensureItemBefore(payload.item.id, target?.id || null);
   await loadWafer(state.current.id);
 }
 
@@ -633,6 +638,39 @@ function insertionTargetItem() {
     if (item) return item;
   }
   return null;
+}
+
+function insertionReference(target, fallbackParentId = null) {
+  if (!target) {
+    return { targetId: null, payload: { parent_id: fallbackParentId } };
+  }
+  const map = childMap();
+  const siblings = map.get(target.parent_id || null) || [];
+  const index = siblings.findIndex((item) => item.id === target.id);
+  const previous = index > 0 ? siblings[index - 1] : null;
+  return {
+    targetId: target.id,
+    payload: {
+      parent_id: target.parent_id ?? fallbackParentId,
+      before_id: target.id,
+      after_id: previous?.id || null
+    }
+  };
+}
+
+async function ensureItemBefore(itemId, targetId) {
+  if (!targetId) return;
+  for (let index = 0; index < 80; index += 1) {
+    const payload = await api(`/api/wafers/${state.current.id}`);
+    const item = payload.wafer.items.find((candidate) => candidate.id === itemId);
+    const target = payload.wafer.items.find((candidate) => candidate.id === targetId);
+    if (!item || !target || item.parent_id !== target.parent_id) return;
+    if (Number(item.order_index) < Number(target.order_index)) return;
+    await api(`/api/items/${itemId}/move`, {
+      method: "POST",
+      body: JSON.stringify({ direction: "up" })
+    });
+  }
 }
 
 function firstVisibleItem() {
@@ -997,7 +1035,7 @@ async function insertShortcutLayer(shortcut) {
   const target = insertionTargetItem() || firstVisibleItem();
   const payload = {
     item_type: "layer",
-    before_id: target?.id || null,
+    ...insertionReference(target).payload,
     layer_name: shortcut.layer_name || shortcut.label || "新层",
     material: shortcut.material || "",
     thickness_nm: shortcut.thickness_nm || 0,
@@ -1009,6 +1047,7 @@ async function insertShortcutLayer(shortcut) {
   });
   state.selectedItemId = result.item.id;
   state.insertTargetItemId = result.item.id;
+  await ensureItemBefore(result.item.id, target?.id || null);
   await loadWafer(state.current.id);
   showStatus(`${shortcut.label || "快捷项"} 已插入为新层`);
 }
