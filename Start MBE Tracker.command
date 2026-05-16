@@ -22,6 +22,28 @@ except Exception:
 PY
 }
 
+stop_existing_service() {
+  local pids
+  pids="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return
+  fi
+
+  echo "Stopping existing service on port $PORT..."
+  echo "$pids" | xargs kill 2>/dev/null || true
+
+  for _ in {1..20}; do
+    if ! lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "Old service stopped."
+      return
+    fi
+    sleep 0.2
+  done
+
+  echo "Force stopping old service..."
+  echo "$pids" | xargs kill -9 2>/dev/null || true
+}
+
 clear
 echo "MBE Tracker"
 echo "Project: $APP_DIR"
@@ -30,12 +52,9 @@ echo
 
 if is_healthy; then
   echo "The local service is already running."
-  echo "Opening the web page..."
-  open "$URL"
+  echo "Restarting it so the latest code is used."
+  stop_existing_service
   echo
-  echo "You can close this window."
-  read -r "?Press Enter to close."
-  exit 0
 fi
 
 echo "Starting the local service..."
