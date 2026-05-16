@@ -18,6 +18,7 @@ from mbe_tracker.database import (
     create_wafer,
     delete_item,
     delete_wafer,
+    DuplicateWaferCodeError,
     duplicate_wafer,
     export_payload,
     get_wafer,
@@ -106,10 +107,16 @@ class MBEHandler(BaseHTTPRequestHandler):
                 self.handle_static(parsed.path)
         except KeyError as exc:
             json_response(self, HTTPStatus.NOT_FOUND, {"error": str(exc)})
+        except DuplicateWaferCodeError as exc:
+            json_response(
+                self,
+                HTTPStatus.CONFLICT,
+                {"error": str(exc), "code": exc.code, "wafer_code": exc.wafer_code},
+            )
         except ValueError as exc:
             json_response(self, HTTPStatus.BAD_REQUEST, {"error": str(exc)})
         except sqlite_error() as exc:
-            json_response(self, HTTPStatus.CONFLICT, {"error": str(exc)})
+            json_response(self, HTTPStatus.CONFLICT, sqlite_error_payload(exc))
         except Exception as exc:
             json_response(self, HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})
 
@@ -212,6 +219,13 @@ def sqlite_error() -> type[Exception]:
     import sqlite3
 
     return sqlite3.Error
+
+
+def sqlite_error_payload(exc: Exception) -> Dict[str, Any]:
+    message = str(exc)
+    if "UNIQUE constraint failed: wafer.wafer_code" in message:
+        return {"error": "片号已存在，请换一个片号。", "code": "duplicate_wafer_code"}
+    return {"error": message}
 
 
 def optional_int(value: Any) -> Optional[int]:

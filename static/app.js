@@ -8,7 +8,10 @@ const state = {
   collapsedItemIds: new Set(),
   shortcuts: [],
   saveTimers: new Map(),
-  waferSaveTimer: null
+  waferSaveTimer: null,
+  rowAnimationItemId: null,
+  rowAnimationKind: "",
+  rowAnimationTimer: null
 };
 
 const DEFAULT_SHORTCUTS = [
@@ -81,13 +84,18 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   if (!response.ok) {
     let message = response.statusText;
+    let payload = {};
     try {
-      const payload = await response.json();
+      payload = await response.json();
       message = payload.error || message;
     } catch {
       // Keep response status text.
     }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.code = payload.code || "";
+    error.payload = payload;
+    throw error;
   }
   const contentType = response.headers.get("Content-Type") || "";
   if (contentType.includes("application/json")) {
@@ -169,6 +177,7 @@ function renderItems() {
     return;
   }
   els.layerTableBody.innerHTML = rows.map(({ item, depth }) => renderItemRow(item, depth, map)).join("");
+  scheduleRowAnimationClear();
 }
 
 function renderItemRow(item, depth, map) {
@@ -186,6 +195,7 @@ function renderItemRow(item, depth, map) {
   const rowLabel = repeat ? "重复层" : depth > 0 ? "内部层" : "层";
   const rowClass = repeat ? "repeat-row" : child;
   const depthClass = depth > 0 ? "nested-row" : "root-row";
+  const animationClass = rowAnimationClass(item);
   const levelOffset = depth * 32;
   const railOffset = Math.max(0, levelOffset - 16);
   const materialCell = materialDisabled
@@ -203,7 +213,7 @@ function renderItemRow(item, depth, map) {
     ? lockedCell("展开内部层，在具体内部层里填写掺杂", "展开内部层填写")
     : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`;
   return `
-    <tr class="${selected} ${rowClass} ${child} ${depthClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
+    <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
       <td class="action-cell">
         <div class="row-actions tree-actions">
           <button data-action="select-row" title="选择">•</button>
@@ -234,6 +244,32 @@ function renderItemRow(item, depth, map) {
 
 function lockedCell(message, text) {
   return `<span class="locked-cell" data-lock-message="${escapeAttr(message)}" title="${escapeAttr(message)}">${escapeHtml(text)}</span>`;
+}
+
+function queueRowAnimation(itemId, kind = "insert") {
+  state.rowAnimationItemId = itemId;
+  state.rowAnimationKind = kind;
+}
+
+function rowAnimationClass(item) {
+  if (item.id !== state.rowAnimationItemId) return "";
+  const kind = state.rowAnimationKind || "insert";
+  return `row-animate row-animate-${kind}`;
+}
+
+function scheduleRowAnimationClear() {
+  if (!state.rowAnimationItemId) return;
+  const itemId = state.rowAnimationItemId;
+  clearTimeout(state.rowAnimationTimer);
+  state.rowAnimationTimer = setTimeout(() => {
+    if (state.rowAnimationItemId === itemId) {
+      state.rowAnimationItemId = null;
+      state.rowAnimationKind = "";
+    }
+    els.layerTableBody
+      .querySelectorAll(".row-animate")
+      .forEach((row) => row.classList.remove("row-animate", "row-animate-insert", "row-animate-move-up", "row-animate-move-down"));
+  }, 560);
 }
 
 function handleWaferListClick(event) {
@@ -291,10 +327,14 @@ async function handleTableClick(event) {
       await addInnerLayer();
     }
     if (action === "move-up" || action === "move-down") {
+      const direction = action === "move-up" ? "up" : "down";
       await api(`/api/items/${id}/move`, {
         method: "POST",
-        body: JSON.stringify({ direction: action === "move-up" ? "up" : "down" })
+        body: JSON.stringify({ direction })
       });
+      state.selectedItemId = id;
+      state.insertTargetItemId = id;
+      queueRowAnimation(id, `move-${direction}`);
       await loadWafer(state.current.id);
     }
     if (action === "delete-item") {
@@ -336,18 +376,22 @@ function handleItemInput(event) {
 function handleWaferInput(event) {
   if (!state.current) return;
   const field = event.target.dataset.waferField;
+  const waferId = state.current.id;
   state.current[field] = event.target.value;
   clearTimeout(state.waferSaveTimer);
   state.waferSaveTimer = setTimeout(async () => {
     try {
-      await api(`/api/wafers/${state.current.id}`, {
+      await api(`/api/wafers/${waferId}`, {
         method: "PUT",
         body: JSON.stringify(pickWaferFields(state.current))
       });
       showStatus("已保存");
-      await loadWafers(state.current.id);
+      await loadWafers(waferId);
     } catch (error) {
       showError(error);
+      if (field === "wafer_code" && isDuplicateWaferError(error)) {
+        await loadWafer(waferId);
+      }
     }
   }, 350);
 }
@@ -402,6 +446,7 @@ async function addLayer() {
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
   await ensureItemBefore(payload.item.id, target?.id || null);
+  queueRowAnimation(payload.item.id, "insert");
   await loadWafer(state.current.id);
 }
 
@@ -453,6 +498,7 @@ async function addInnerLayer() {
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
   await ensureItemBefore(payload.item.id, beforeTarget?.id || null);
+  queueRowAnimation(payload.item.id, "insert");
   await loadWafer(state.current.id);
 }
 
@@ -492,6 +538,7 @@ async function undoLastStep() {
   state.insertTargetItemId = payload.item.id;
   remapPendingUndoParents(payload.id_map || {});
   updateUndoButton();
+  queueRowAnimation(payload.item.id, "insert");
   await loadWafer(state.current.id);
   showStatus(stack.length ? `已撤回，还可撤回 ${stack.length} 步` : "已撤回");
 }
@@ -565,6 +612,7 @@ async function pasteItem() {
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
   await ensureItemBefore(payload.item.id, target?.id || null);
+  queueRowAnimation(payload.item.id, "insert");
   await loadWafer(state.current.id);
 }
 
@@ -1048,6 +1096,7 @@ async function insertShortcutLayer(shortcut) {
   state.selectedItemId = result.item.id;
   state.insertTargetItemId = result.item.id;
   await ensureItemBefore(result.item.id, target?.id || null);
+  queueRowAnimation(result.item.id, "insert");
   await loadWafer(state.current.id);
   showStatus(`${shortcut.label || "快捷项"} 已插入为新层`);
 }
@@ -1108,7 +1157,15 @@ function showStatus(message) {
 
 function showError(error) {
   console.error(error);
-  showStatus(error.message || String(error));
+  const message = error.message || String(error);
+  showStatus(message);
+  if (isDuplicateWaferError(error) && typeof window.alert === "function") {
+    window.alert(message);
+  }
+}
+
+function isDuplicateWaferError(error) {
+  return error?.code === "duplicate_wafer_code";
 }
 
 function debounce(fn, delay) {

@@ -260,6 +260,7 @@ input:focus {
   border-bottom: 1px solid var(--line);
   padding: 6px;
   vertical-align: middle;
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .layer-table th {
@@ -287,6 +288,67 @@ input:focus {
 
 .layer-table tr.selected td {
   background-color: #edf7f4;
+}
+
+.layer-table tr.row-animate-insert td {
+  animation: rowInsert 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.layer-table tr.row-animate-move-up td {
+  animation: rowMoveUp 440ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.layer-table tr.row-animate-move-down td {
+  animation: rowMoveDown 440ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes rowInsert {
+  0% {
+    opacity: 0.55;
+    transform: translateY(-8px);
+    background-color: #e0f4ef;
+  }
+  65% {
+    opacity: 1;
+    background-color: #d8f0e9;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rowMoveUp {
+  0% {
+    transform: translateY(10px);
+    background-color: #fff2d8;
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes rowMoveDown {
+  0% {
+    transform: translateY(-10px);
+    background-color: #fff2d8;
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layer-table th,
+  .layer-table td {
+    transition: none;
+  }
+
+  .layer-table tr.row-animate-insert td,
+  .layer-table tr.row-animate-move-up td,
+  .layer-table tr.row-animate-move-down td {
+    animation: none;
+  }
 }
 
 .actions-col {

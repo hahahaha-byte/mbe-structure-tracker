@@ -27,6 +27,14 @@ FLOAT_ITEM_FIELDS = {"thickness_nm", "single_period_thickness_nm"}
 INT_ITEM_FIELDS = {"parent_id", "order_index", "periods", "is_quantum_dot"}
 
 
+class DuplicateWaferCodeError(ValueError):
+    code = "duplicate_wafer_code"
+
+    def __init__(self, wafer_code: str) -> None:
+        self.wafer_code = wafer_code
+        super().__init__(f"片号 {wafer_code} 已存在，请换一个片号。")
+
+
 def utc_now() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
@@ -208,6 +216,7 @@ def get_wafer(conn: sqlite3.Connection, wafer_id: int) -> Dict[str, Any]:
 def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, Any]:
     now = utc_now()
     code = clean_text(data.get("wafer_code")) or unique_wafer_code(conn, "N-new")
+    ensure_unique_wafer_code(conn, code)
     conn.execute(
         """
         INSERT INTO wafer (wafer_code, size, structure_name, growth_date, notes, created_at, updated_at)
@@ -233,8 +242,11 @@ def update_wafer(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) 
     params: List[Any] = []
     for field in allowed:
         if field in data:
+            value = clean_text(data.get(field))
+            if field == "wafer_code":
+                ensure_unique_wafer_code(conn, value, wafer_id)
             updates.append(f"{field} = ?")
-            params.append(clean_text(data.get(field)))
+            params.append(value)
     if updates:
         updates.append("updated_at = ?")
         params.append(utc_now())
@@ -259,6 +271,16 @@ def unique_wafer_code(conn: sqlite3.Connection, base_code: str) -> str:
     while f"{base}-{index}" in existing:
         index += 1
     return f"{base}-{index}"
+
+
+def ensure_unique_wafer_code(conn: sqlite3.Connection, wafer_code: str, exclude_id: Optional[int] = None) -> None:
+    params: List[Any] = [clean_text(wafer_code)]
+    sql = "SELECT id FROM wafer WHERE wafer_code = ?"
+    if exclude_id is not None:
+        sql += " AND id != ?"
+        params.append(exclude_id)
+    if conn.execute(sql, params).fetchone():
+        raise DuplicateWaferCodeError(clean_text(wafer_code))
 
 
 def next_order(conn: sqlite3.Connection, wafer_id: int, parent_id: Optional[int]) -> int:
@@ -618,7 +640,12 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
     source = row_to_dict(conn.execute("SELECT * FROM wafer WHERE id = ?", (wafer_id,)).fetchone())
     if not source:
         raise KeyError("wafer_not_found")
-    code = unique_wafer_code(conn, clean_text(new_code) or f"{source['wafer_code']}-copy")
+    requested_code = clean_text(new_code)
+    if requested_code:
+        ensure_unique_wafer_code(conn, requested_code)
+        code = requested_code
+    else:
+        code = unique_wafer_code(conn, f"{source['wafer_code']}-copy")
     now = utc_now()
     conn.execute(
         """
