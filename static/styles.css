@@ -164,16 +164,51 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  padding: 10px;
-  text-align: left;
+  padding: 6px;
   display: grid;
-  gap: 3px;
+  grid-template-columns: 24px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 6px;
   box-shadow: none;
 }
 
 .wafer-item.active {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.wafer-select {
+  display: grid;
+  place-items: center;
+}
+
+.wafer-select input {
+  width: 16px;
+  min-height: 16px;
+  padding: 0;
+}
+
+.wafer-main {
+  min-width: 0;
+  min-height: 52px;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: grid;
+  gap: 3px;
+}
+
+.wafer-main:hover {
+  color: var(--accent-strong);
+}
+
+.wafer-delete {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  color: var(--danger);
 }
 
 .wafer-code {
@@ -925,6 +960,14 @@ select:focus {
   align-items: center;
   gap: 8px;
   min-height: 34px;
+}
+
+.modal-delete-list {
+  max-height: 160px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--muted);
 }
 
 .choice-row input,

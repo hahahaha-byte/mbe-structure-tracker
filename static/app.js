@@ -6,6 +6,7 @@ const state = {
   copiedItemId: null,
   undoHistory: new Map(),
   collapsedItemIds: new Set(),
+  waferSelection: new Set(),
   shortcuts: [],
   saveTimers: new Map(),
   waferSaveTimer: null,
@@ -55,6 +56,7 @@ function bindElements() {
   els.statusText = document.getElementById("statusText");
   els.shortcutList = document.getElementById("shortcutList");
   els.undoDeleteBtn = document.getElementById("undoDeleteBtn");
+  els.deleteSelectedWafersBtn = document.getElementById("deleteSelectedWafersBtn");
   els.jsonImportInput = document.getElementById("jsonImportInput");
   els.waferFields = {
     wafer_code: document.getElementById("waferCode"),
@@ -68,6 +70,7 @@ function bindElements() {
 function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
   document.getElementById("importJsonBtn").addEventListener("click", () => els.jsonImportInput.click());
+  els.deleteSelectedWafersBtn.addEventListener("click", () => deleteSelectedWafers().catch(showError));
   els.jsonImportInput.addEventListener("change", importJsonFiles);
   document.getElementById("addShortcutBtn").addEventListener("click", addShortcut);
   els.searchInput.addEventListener("input", debounce(() => loadWafers(), 180));
@@ -120,6 +123,7 @@ async function loadWafers(selectId = null) {
   const search = encodeURIComponent(els.searchInput.value.trim());
   const payload = await api(`/api/wafers?search=${search}`);
   state.wafers = payload.wafers;
+  pruneWaferSelection();
   renderWaferList();
   const idToLoad = selectId || state.current?.id || state.wafers[0]?.id;
   if (idToLoad) {
@@ -146,20 +150,29 @@ async function loadWafer(id) {
 function renderWaferList() {
   if (!state.wafers.length) {
     els.waferList.innerHTML = `<div class="wafer-meta">暂无数据</div>`;
+    updateWaferDeleteButton();
     return;
   }
   els.waferList.innerHTML = state.wafers
     .map((wafer) => {
       const active = wafer.id === state.current?.id ? "active" : "";
+      const checked = state.waferSelection.has(wafer.id) ? "checked" : "";
       return `
-        <button class="wafer-item ${active}" data-wafer-id="${wafer.id}">
-          <span class="wafer-code">${escapeHtml(wafer.wafer_code)}</span>
-          <span class="wafer-meta">${escapeHtml(wafer.structure_name || "未命名结构")}</span>
-          <span class="wafer-meta">${escapeHtml(wafer.size || "")} · ${wafer.item_count || 0} 层 · ${wafer.doped_item_count || 0} 掺杂</span>
-        </button>
+        <div class="wafer-item ${active}">
+          <label class="wafer-select" title="选择批量删除">
+            <input type="checkbox" data-wafer-select="${wafer.id}" ${checked} />
+          </label>
+          <button class="wafer-main" data-wafer-id="${wafer.id}">
+            <span class="wafer-code">${escapeHtml(wafer.wafer_code)}</span>
+            <span class="wafer-meta">${escapeHtml(wafer.structure_name || "未命名结构")}</span>
+            <span class="wafer-meta">${escapeHtml(wafer.size || "")} · ${wafer.item_count || 0} 层 · ${wafer.doped_item_count || 0} 掺杂</span>
+          </button>
+          <button class="wafer-delete" data-wafer-delete="${wafer.id}" title="删除整片">×</button>
+        </div>
       `;
     })
     .join("");
+  updateWaferDeleteButton();
 }
 
 function renderCurrent() {
@@ -324,9 +337,104 @@ function scheduleRowAnimationClear() {
 }
 
 function handleWaferListClick(event) {
+  const selector = event.target.closest("[data-wafer-select]");
+  if (selector) {
+    const waferId = Number(selector.dataset.waferSelect);
+    if (selector.checked) {
+      state.waferSelection.add(waferId);
+    } else {
+      state.waferSelection.delete(waferId);
+    }
+    updateWaferDeleteButton();
+    return;
+  }
+  const deleteButton = event.target.closest("[data-wafer-delete]");
+  if (deleteButton) {
+    const wafer = waferById(Number(deleteButton.dataset.waferDelete));
+    if (wafer) deleteWafersWithConfirmation([wafer]).catch(showError);
+    return;
+  }
   const button = event.target.closest("[data-wafer-id]");
   if (!button) return;
   loadWafer(Number(button.dataset.waferId)).catch(showError);
+}
+
+function waferById(id) {
+  return state.wafers.find((wafer) => wafer.id === id) || null;
+}
+
+function pruneWaferSelection() {
+  const visibleIds = new Set(state.wafers.map((wafer) => wafer.id));
+  Array.from(state.waferSelection).forEach((id) => {
+    if (!visibleIds.has(id)) state.waferSelection.delete(id);
+  });
+}
+
+function updateWaferDeleteButton() {
+  const count = state.waferSelection.size;
+  els.deleteSelectedWafersBtn.disabled = count === 0;
+  els.deleteSelectedWafersBtn.textContent = count ? `删除选中 ${count}` : "删除选中";
+}
+
+async function deleteSelectedWafers() {
+  const wafers = Array.from(state.waferSelection)
+    .map((id) => waferById(id))
+    .filter(Boolean);
+  await deleteWafersWithConfirmation(wafers);
+}
+
+async function deleteWafersWithConfirmation(wafers) {
+  if (!wafers.length) return;
+  const confirmed = await confirmWaferDeletion(wafers);
+  if (!confirmed) return;
+  await deleteWafers(wafers);
+}
+
+function confirmWaferDeletion(wafers) {
+  return new Promise((resolve) => {
+    const isBatch = wafers.length > 1;
+    const title = isBatch ? "批量删除外延片" : "删除外延片";
+    const list = wafers
+      .slice(0, 8)
+      .map((wafer) => `<li>${escapeHtml(wafer.wafer_code)}</li>`)
+      .join("");
+    const more = wafers.length > 8 ? `<li>另外 ${wafers.length - 8} 片</li>` : "";
+    const modal = showModal(`
+      <div class="modal-backdrop">
+        <div class="modal-panel">
+          <div class="modal-title">
+            <h2>${title}</h2>
+            <button data-modal-close title="关闭">×</button>
+          </div>
+          <p class="modal-copy">确认删除 ${isBatch ? `${wafers.length} 片外延片` : `片号 <strong>${escapeHtml(wafers[0].wafer_code)}</strong>`}？删除后这片的层结构也会一起删除。</p>
+          ${isBatch ? `<ul class="modal-delete-list">${list}${more}</ul>` : ""}
+          <div class="modal-actions">
+            <button data-modal-close>取消</button>
+            <button class="danger-btn" id="confirmWaferDeleteBtn">${isBatch ? "确认批量删除" : "确认删除"}</button>
+          </div>
+        </div>
+      </div>
+    `, () => resolve(false));
+    modal.querySelector("#confirmWaferDeleteBtn").addEventListener("click", () => {
+      closeModal(modal);
+      resolve(true);
+    });
+  });
+}
+
+async function deleteWafers(wafers) {
+  const deletedIds = new Set(wafers.map((wafer) => wafer.id));
+  for (const wafer of wafers) {
+    await api(`/api/wafers/${wafer.id}`, { method: "DELETE" });
+  }
+  deletedIds.forEach((id) => state.waferSelection.delete(id));
+  if (state.current && deletedIds.has(state.current.id)) {
+    state.current = null;
+    state.selectedItemId = null;
+    state.insertTargetItemId = null;
+  }
+  showStatus(`已删除 ${wafers.length} 片外延片`);
+  await loadWafers();
 }
 
 async function handleToolbarClick(event) {
