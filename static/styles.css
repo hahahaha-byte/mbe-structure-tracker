@@ -660,6 +660,10 @@ input:focus {
   color: #121714;
 }
 
+.stack-segment.with-children {
+  justify-content: flex-start;
+}
+
 .stack-segment.thin-layer {
   outline: 1px solid rgba(24, 32, 29, 0.08);
   outline-offset: -1px;
@@ -670,6 +674,13 @@ input:focus {
   position: relative;
   z-index: 2;
   padding: 4px 8px;
+}
+
+.stack-segment.with-children > .segment-header {
+  min-height: 38px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .stack-segment.repeat {
@@ -684,24 +695,24 @@ input:focus {
 }
 
 .repeat-children {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin: 0 5px 5px 8px;
-  padding: 4px 0 0 7px;
-  border-left: 2px solid rgba(92, 109, 57, 0.3);
-  overflow: hidden;
+  gap: 4px;
+  margin: 0 5px 7px 8px;
+  padding: 6px 0 0 9px;
+  border-left: 3px solid rgba(92, 109, 57, 0.38);
+  overflow: visible;
 }
 
 .repeat-children .stack-segment {
+  flex: 0 0 auto;
   border: 1px solid rgba(24, 32, 29, 0.12);
   border-radius: 4px;
 }
 
 .stack-segment.qd-cap {
-  box-shadow: inset 0 -14px 0 rgba(255, 247, 250, 0.72);
+  box-shadow: inset 0 -16px 0 rgba(255, 247, 250, 0.82);
 }
 
 .qd-dots {
@@ -709,13 +720,23 @@ input:focus {
   left: 10px;
   right: 10px;
   bottom: 5px;
-  height: 10px;
+  height: 11px;
   z-index: 1;
   border-radius: 999px;
-  background-image: radial-gradient(circle, rgba(191, 77, 111, 0.9) 0 2px, transparent 2.5px);
-  background-size: 13px 10px;
+  background-image: radial-gradient(circle, rgba(191, 77, 111, 0.95) 0 2.3px, transparent 2.8px);
+  background-size: 13px 11px;
   background-position: 2px 50%;
   pointer-events: none;
+}
+
+.repeat-children .stack-segment.qd-cap .qd-dots,
+.repeat-children .stack-segment.qd-marker .qd-dots {
+  left: 8px;
+  right: 8px;
+  bottom: 6px;
+  height: 12px;
+  background-color: rgba(255, 247, 250, 0.68);
+  background-size: 12px 11px;
 }
 
 .stack-segment.qd-marker {

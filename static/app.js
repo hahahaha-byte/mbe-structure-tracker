@@ -24,9 +24,13 @@ const DEFAULT_SHORTCUTS = [
 
 const STACK_VIEW_HEIGHT = 470;
 const STACK_VIEW_THICKNESS_NM = 4000;
-const STACK_MIN_LAYER_HEIGHT = 28;
-const STACK_MIN_REPEAT_HEIGHT = 32;
-const STACK_MIN_QD_HEIGHT = 22;
+const STACK_MIN_LAYER_HEIGHT = 44;
+const STACK_MIN_REPEAT_HEIGHT = 48;
+const STACK_MIN_QD_HEIGHT = 32;
+const STACK_REPEAT_HEADER_HEIGHT = 38;
+const STACK_REPEAT_CHILD_PADDING_TOP = 6;
+const STACK_REPEAT_CHILD_PADDING_BOTTOM = 7;
+const STACK_REPEAT_CHILD_GAP = 4;
 
 const els = {};
 
@@ -1119,31 +1123,70 @@ function drawReportHeader(ctx, wafer, width) {
 }
 
 function stackCanvasParts(items, map, fixedScale, availableHeight) {
+  return stackLayoutParts(items, map, availableHeight, fixedScale);
+}
+
+function sumCanvasHeights(parts) {
+  return stackLayoutHeight(parts);
+}
+
+function stackLayoutParts(items, map, availableHeight = STACK_VIEW_HEIGHT, fixedScale = false) {
+  const parts = stackRenderableParts(items, map);
+  const visibleParts = parts.filter((part) => part.item);
+  const totalThickness = visibleParts.reduce((sum, part) => sum + computeItem(part.item, map).thickness, 0);
+  return parts.map((part) => {
+    if (part.qdMarker) return { ...part, height: STACK_MIN_QD_HEIGHT };
+    const item = part.item;
+    const computed = computeItem(item, map);
+    const repeat = isRepeatItem(item, map);
+    const baseHeight = fixedScale
+      ? visualFixedScaleHeight(computed.thickness, repeat, false)
+      : visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
+    const childItems = repeat ? map.get(item.id) || [] : [];
+    let childParts = [];
+    let height = baseHeight;
+    if (childItems.length) {
+      const childArea = Math.max(
+        STACK_MIN_LAYER_HEIGHT,
+        baseHeight - STACK_REPEAT_HEADER_HEIGHT - STACK_REPEAT_CHILD_PADDING_TOP - STACK_REPEAT_CHILD_PADDING_BOTTOM
+      );
+      childParts = stackLayoutParts(childItems, map, childArea, false);
+      height = Math.max(baseHeight, repeatHeightForChildren(childParts));
+    }
+    return { ...part, computed, height, childParts };
+  });
+}
+
+function stackRenderableParts(items, map) {
   const parts = [];
-  const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
-  const totalThickness = visibleItems.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
   items.forEach((item, index) => {
     if (!isRepeatItem(item, map) && isQuantumDot(item)) {
       const previous = lastStackSegment(parts);
-      if (previous) previous.qdMarkers.push(item);
-      else parts.push({ qdMarker: item, height: STACK_MIN_QD_HEIGHT });
+      if (previous) {
+        previous.qdMarkers.push(item);
+      } else {
+        parts.push({ qdMarker: item });
+      }
       return;
     }
-    const computed = computeItem(item, map);
-    const repeat = isRepeatItem(item, map);
-    const height = fixedScale
-      ? visualFixedScaleHeight(computed.thickness, repeat, false)
-      : visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
-    parts.push({ item, index, computed, height, qdMarkers: [] });
+    parts.push({ item, index, qdMarkers: [] });
   });
   return parts;
 }
 
-function sumCanvasHeights(parts) {
-  return parts.reduce((sum, part) => sum + part.height, 0);
+function repeatHeightForChildren(childParts) {
+  return STACK_REPEAT_HEADER_HEIGHT
+    + STACK_REPEAT_CHILD_PADDING_TOP
+    + stackLayoutHeight(childParts, STACK_REPEAT_CHILD_GAP)
+    + STACK_REPEAT_CHILD_PADDING_BOTTOM;
 }
 
-function drawStackParts(ctx, parts, map, x, y, width, stackHeight) {
+function stackLayoutHeight(parts, gap = 0) {
+  if (!parts.length) return 0;
+  return parts.reduce((sum, part) => sum + part.height, 0) + gap * (parts.length - 1);
+}
+
+function drawStackParts(ctx, parts, map, x, y, width, stackHeight, gap = 0) {
   ctx.save();
   roundedRect(ctx, x, y, width, stackHeight, 10);
   ctx.clip();
@@ -1156,7 +1199,7 @@ function drawStackParts(ctx, parts, map, x, y, width, stackHeight) {
     } else {
       drawCanvasSegment(ctx, part, map, x, cursor, width, part.height);
     }
-    cursor += part.height;
+    cursor += part.height + gap;
   });
   ctx.restore();
   ctx.strokeStyle = "#d9ded6";
@@ -1168,7 +1211,7 @@ function drawStackParts(ctx, parts, map, x, y, width, stackHeight) {
 function drawCanvasSegment(ctx, part, map, x, y, width, height) {
   const item = part.item;
   const repeat = isRepeatItem(item, map);
-  const children = map.get(item.id) || [];
+  const childParts = part.childParts || [];
   ctx.fillStyle = materialColor(item.material || item.layer_name || String(part.index));
   ctx.fillRect(x, y, width, height);
   if (repeat) drawRepeatPattern(ctx, x, y, width, height);
@@ -1177,9 +1220,18 @@ function drawCanvasSegment(ctx, part, map, x, y, width, height) {
   if (part.qdMarkers.length) drawQdDotsCanvas(ctx, x + 12, y + height - 17, width - 24, part.qdMarkers);
   drawSegmentText(ctx, item.layer_name || item.material || "未命名层", stackMeta(item, part.computed, map, part.qdMarkers), x, y, width, height);
   if (hasDoping(item)) drawDopedBadge(ctx, x + width - 30, y + height / 2);
-  if (repeat && children.length && height > 74) {
-    const childParts = stackCanvasParts(children, map, false, Math.max(28, height - 40));
-    drawStackParts(ctx, childParts, map, x + 28, y + 38, width - 46, Math.max(28, height - 44));
+  if (repeat && childParts.length) {
+    const childHeight = stackLayoutHeight(childParts, STACK_REPEAT_CHILD_GAP);
+    drawStackParts(
+      ctx,
+      childParts,
+      map,
+      x + 28,
+      y + STACK_REPEAT_HEADER_HEIGHT + STACK_REPEAT_CHILD_PADDING_TOP,
+      width - 46,
+      childHeight,
+      STACK_REPEAT_CHILD_GAP
+    );
   }
 }
 
@@ -1458,25 +1510,14 @@ function renderStack(map) {
 }
 
 function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT, fixedScale = false) {
-  const parts = [];
-  const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
-  const totalThickness = visibleItems.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
-  items.forEach((item, index) => {
-    if (!isRepeatItem(item, map) && isQuantumDot(item)) {
-      const previous = lastStackSegment(parts);
-      if (previous) {
-        previous.qdMarkers.push(item);
-      } else {
-        parts.push({ qdMarker: item });
-      }
-      return;
-    }
-    parts.push({ item, index, qdMarkers: [] });
-  });
+  return renderStackLayout(stackLayoutParts(items, map, availableHeight, fixedScale), map, depth);
+}
+
+function renderStackLayout(parts, map, depth) {
   return parts
     .map((part) => {
-      if (part.qdMarker) return renderQdMarker(part.qdMarker, depth);
-      return renderStackSegment(part.item, map, depth, part.qdMarkers, part.index, totalThickness, availableHeight, fixedScale);
+      if (part.qdMarker) return renderQdMarker(part.qdMarker, depth, part.height);
+      return renderStackSegment(part, map, depth);
     })
     .join("");
 }
@@ -1488,18 +1529,16 @@ function lastStackSegment(parts) {
   return null;
 }
 
-function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, availableHeight, fixedScale) {
-  const computed = computeItem(item, map);
+function renderStackSegment(part, map, depth) {
+  const item = part.item;
+  const computed = part.computed;
   const repeat = isRepeatItem(item, map);
-  const children = map.get(item.id) || [];
-  const hasChildren = repeat && children.length > 0;
-  const qdCap = qdMarkers.length > 0;
-  const color = materialColor(item.material || item.layer_name || String(index));
-  const height = fixedScale
-    ? visualFixedScaleHeight(computed.thickness, repeat, false)
-    : visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
-  const childHeight = Math.max(STACK_MIN_LAYER_HEIGHT, height - 34);
-  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1, childHeight, false) : "";
+  const childParts = part.childParts || [];
+  const hasChildren = repeat && childParts.length > 0;
+  const qdCap = part.qdMarkers.length > 0;
+  const color = materialColor(item.material || item.layer_name || String(part.index));
+  const height = part.height;
+  const childHtml = hasChildren ? renderStackLayout(childParts, map, depth + 1) : "";
   const classes = [
     "stack-segment",
     repeat ? "repeat" : "",
@@ -1513,9 +1552,9 @@ function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, 
     <div class="${classes}" style="height:${height}px; min-height:${height}px; background-color:${color}; --stack-depth:${depth}">
       <div class="segment-header">
         <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
-        <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, qdMarkers))}</div>
+        <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, part.qdMarkers))}</div>
       </div>
-      ${qdCap ? renderQdDots(qdMarkers) : ""}
+      ${qdCap ? renderQdDots(part.qdMarkers) : ""}
       ${hasChildren ? `<div class="repeat-children">${childHtml}</div>` : ""}
     </div>
   `;
@@ -1526,10 +1565,10 @@ function renderQdDots(items) {
   return `<div class="qd-dots" title="${escapeAttr(label ? `QD ${label}` : "QD")}"></div>`;
 }
 
-function renderQdMarker(item, depth) {
+function renderQdMarker(item, depth, height = STACK_MIN_QD_HEIGHT) {
   const color = materialColor(item.material || item.layer_name || "QD");
   return `
-    <div class="stack-segment qd-marker compact" style="height:${STACK_MIN_QD_HEIGHT}px; min-height:${STACK_MIN_QD_HEIGHT}px; background-color:${color}; --stack-depth:${depth}">
+    <div class="stack-segment qd-marker compact" style="height:${height}px; min-height:${height}px; background-color:${color}; --stack-depth:${depth}">
       <div class="qd-dots"></div>
       <div class="segment-header">
         <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
