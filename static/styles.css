@@ -744,9 +744,10 @@ select:focus {
 .qd-dots {
   position: relative;
   min-width: 0;
-  height: calc(100% - 10px);
-  min-height: 18px;
-  margin: 5px 6px 5px 0;
+  height: 13px;
+  min-height: 13px;
+  align-self: center;
+  margin: 0 6px 0 0;
   z-index: 1;
   border-radius: 999px;
   border: 1px solid rgba(191, 77, 111, 0.12);
@@ -754,13 +755,15 @@ select:focus {
   background-image: radial-gradient(circle, rgba(191, 77, 111, 0.95) 0 2.3px, transparent 2.8px);
   background-size: 13px 11px;
   background-position: 2px 50%;
+  background-repeat: repeat-x;
   pointer-events: none;
 }
 
 .repeat-children .stack-segment.qd-cap .qd-dots,
 .repeat-children .stack-segment.qd-marker .qd-dots {
-  height: calc(100% - 12px);
-  margin: 6px 5px 6px 0;
+  height: 13px;
+  min-height: 13px;
+  margin: 0 5px 0 0;
   background-color: rgba(255, 247, 250, 0.68);
   background-size: 12px 11px;
 }
