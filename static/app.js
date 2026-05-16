@@ -439,9 +439,9 @@ function scheduleItemSave(item) {
 }
 
 async function createNewWafer() {
-  const wafer_code = prompt("片号", nextWaferCode());
-  if (!wafer_code) return;
   try {
+    const wafer_code = prompt("片号", await nextWaferCode());
+    if (!wafer_code) return;
     const payload = await api("/api/wafers", {
       method: "POST",
       body: JSON.stringify({ wafer_code, size: "3英寸", structure_name: "" })
@@ -1244,12 +1244,52 @@ function pickWaferFields(wafer) {
   };
 }
 
-function nextWaferCode() {
+async function nextWaferCode() {
+  const prefix = currentWaferDatePrefix();
+  try {
+    const payload = await api(`/api/wafers?search=${encodeURIComponent(prefix)}`);
+    return nextWaferCodeFromExisting(prefix, payload.wafers || []);
+  } catch (error) {
+    console.warn(error);
+    return nextWaferCodeFromExisting(prefix, state.wafers || []);
+  }
+}
+
+function currentWaferDatePrefix() {
   const date = new Date();
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return `N${yy}${mm}${dd}A`;
+  return `N${yy}${mm}${dd}`;
+}
+
+function nextWaferCodeFromExisting(prefix, wafers) {
+  const usedIndexes = (wafers || [])
+    .map((wafer) => String(wafer.wafer_code || "").trim().toUpperCase())
+    .map((code) => code.match(new RegExp(`^${prefix.toUpperCase()}([A-Z]+)$`)))
+    .filter(Boolean)
+    .map((match) => waferLetterIndex(match[1]))
+    .filter((index) => index > 0);
+  const nextIndex = usedIndexes.length ? Math.max(...usedIndexes) + 1 : 1;
+  return `${prefix}${waferIndexLetter(nextIndex)}`;
+}
+
+function waferLetterIndex(letters) {
+  return String(letters || "")
+    .toUpperCase()
+    .split("")
+    .reduce((sum, letter) => sum * 26 + letter.charCodeAt(0) - 64, 0);
+}
+
+function waferIndexLetter(index) {
+  let value = Math.max(1, Number(index) || 1);
+  let letters = "";
+  while (value > 0) {
+    value -= 1;
+    letters = String.fromCharCode(65 + (value % 26)) + letters;
+    value = Math.floor(value / 26);
+  }
+  return letters;
 }
 
 function numberValue(value) {
