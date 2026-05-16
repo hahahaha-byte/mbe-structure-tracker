@@ -29,7 +29,7 @@ const STACK_VIEW_THICKNESS_NM = 4000;
 const STACK_MIN_LAYER_HEIGHT = 44;
 const STACK_MIN_REPEAT_HEIGHT = 48;
 const STACK_MIN_QD_HEIGHT = 32;
-const STACK_REPEAT_HEADER_HEIGHT = 38;
+const STACK_REPEAT_HEADER_HEIGHT = 50;
 const STACK_REPEAT_CHILD_PADDING_TOP = 6;
 const STACK_REPEAT_CHILD_PADDING_BOTTOM = 7;
 const STACK_REPEAT_CHILD_GAP = 4;
@@ -1785,16 +1785,33 @@ function renderQdMarker(item, depth, height = STACK_MIN_QD_HEIGHT) {
 function stackMeta(item, computed, map, qdMarkers = []) {
   const material = item.material || "";
   const thickness = `${formatNumber(computed.thickness)} nm`;
-  const qdText = qdMarkers.length ? ` · QD ${qdMarkers.map(qdGrowthText).filter(Boolean).join(" + ") || "标记"}` : "";
+  const dopingText = dopingMetaText(item);
+  const dopingSuffix = dopingText ? ` · ${dopingText}` : "";
+  const qdText = qdMarkers.length ? ` · QD ${qdMarkers.map(qdVisualText).filter(Boolean).join(" + ") || "标记"}` : "";
   if (isRepeatItem(item, map)) {
     const childCount = (map.get(item.id) || []).length;
-    return `${item.periods || 1}x · ${childCount ? `${childCount} 子层 · ` : material ? `${material} · ` : ""}${thickness}${qdText}`;
+    return `${item.periods || 1}x · ${childCount ? `${childCount} 子层 · ` : material ? `${material} · ` : ""}${thickness}${dopingSuffix}${qdText}`;
   }
   if (isQuantumDot(item)) {
     const growth = qdGrowthText(item);
-    return `${material}${growth ? ` · ${growth}` : ""} · 不计厚度`;
+    return `${material}${growth ? ` · ${growth}` : ""} · 不计厚度${dopingSuffix}`;
   }
-  return `${material} · ${thickness}${qdText}`;
+  return `${material} · ${thickness}${dopingSuffix}${qdText}`;
+}
+
+function qdVisualText(item) {
+  const growth = qdGrowthText(item);
+  const doping = dopingMetaText(item);
+  return [growth, doping].filter(Boolean).join(" · ");
+}
+
+function dopingMetaText(item) {
+  if (!hasDoping(item)) return "";
+  const type = normalizeDopingType(item.doping_type);
+  const text = String(item.doping || "").trim();
+  if (type && text) return `${type} · ${text}`;
+  if (type) return `${type} 掺杂`;
+  return text;
 }
 
 function renderStats(stats) {

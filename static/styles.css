@@ -799,7 +799,7 @@ select:focus {
 }
 
 .stack-segment.with-children > .segment-body {
-  min-height: 38px;
+  min-height: 50px;
 }
 
 .stack-segment.qd-cap > .segment-body,
