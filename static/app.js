@@ -23,6 +23,7 @@ const DEFAULT_SHORTCUTS = [
 ];
 
 const STACK_VIEW_HEIGHT = 470;
+const STACK_VIEW_THICKNESS_NM = 4000;
 const STACK_MIN_LAYER_HEIGHT = 28;
 const STACK_MIN_REPEAT_HEIGHT = 32;
 const STACK_MIN_QD_HEIGHT = 22;
@@ -837,10 +838,10 @@ function renderStack(map) {
     els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
     return;
   }
-  els.stackVisual.innerHTML = renderStackItems(roots, map, 0, STACK_VIEW_HEIGHT);
+  els.stackVisual.innerHTML = renderStackItems(roots, map, 0, STACK_VIEW_HEIGHT, true);
 }
 
-function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT) {
+function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT, fixedScale = false) {
   const parts = [];
   let pendingQd = [];
   const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
@@ -850,7 +851,7 @@ function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT
       pendingQd.push(item);
       return;
     }
-    parts.push(renderStackSegment(item, map, depth, pendingQd, index, totalThickness, availableHeight));
+    parts.push(renderStackSegment(item, map, depth, pendingQd, index, totalThickness, availableHeight, fixedScale));
     pendingQd = [];
   });
   pendingQd.forEach((item) => {
@@ -859,16 +860,18 @@ function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT
   return parts.join("");
 }
 
-function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, availableHeight) {
+function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, availableHeight, fixedScale) {
   const computed = computeItem(item, map);
   const repeat = isRepeatItem(item, map);
   const children = map.get(item.id) || [];
   const hasChildren = repeat && children.length > 0;
   const qdCap = qdMarkers.length > 0;
   const color = materialColor(item.material || item.layer_name || String(index));
-  const height = visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
+  const height = fixedScale
+    ? visualFixedScaleHeight(computed.thickness, repeat, false)
+    : visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
   const childHeight = Math.max(STACK_MIN_LAYER_HEIGHT, height - 34);
-  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1, childHeight) : "";
+  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1, childHeight, false) : "";
   const classes = [
     "stack-segment",
     repeat ? "repeat" : "",
@@ -1019,6 +1022,13 @@ function visualSegmentHeight(thickness, totalThickness, availableHeight, repeat 
   const minHeight = isQdMarker ? STACK_MIN_QD_HEIGHT : repeat ? STACK_MIN_REPEAT_HEIGHT : STACK_MIN_LAYER_HEIGHT;
   if (value <= 0 || totalThickness <= 0) return minHeight;
   return Math.max(minHeight, (value / totalThickness) * availableHeight);
+}
+
+function visualFixedScaleHeight(thickness, repeat = false, isQdMarker = false) {
+  const value = numberValue(thickness);
+  const minHeight = isQdMarker ? STACK_MIN_QD_HEIGHT : repeat ? STACK_MIN_REPEAT_HEIGHT : STACK_MIN_LAYER_HEIGHT;
+  if (value <= 0) return minHeight;
+  return Math.max(minHeight, (value / STACK_VIEW_THICKNESS_NM) * STACK_VIEW_HEIGHT);
 }
 
 function sumThickness(items, map) {
