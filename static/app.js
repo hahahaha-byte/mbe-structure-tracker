@@ -1297,7 +1297,7 @@ function drawSegmentText(ctx, name, meta, x, y, width, height, reserveRight = 48
 }
 
 function qdLaneRect(x, y, width, height, doped = false) {
-  const laneWidth = Math.min(220, Math.max(92, width * 0.32));
+  const laneWidth = Math.min(150, Math.max(72, width * 0.24));
   const rightReserve = doped ? 42 : 10;
   return {
     x: x + width - laneWidth - rightReserve,

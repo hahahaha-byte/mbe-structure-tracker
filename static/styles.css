@@ -76,7 +76,7 @@ select:focus {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 280px minmax(760px, 1fr) 360px;
+  grid-template-columns: 280px minmax(680px, 1fr) 430px;
   min-height: 100vh;
 }
 
@@ -630,14 +630,13 @@ select:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow-y: auto;
-  overflow-x: auto;
+  overflow-x: hidden;
   scrollbar-gutter: stable;
   background: #f9faf8;
 }
 
 .stack-visual::-webkit-scrollbar {
   width: 10px;
-  height: 10px;
 }
 
 .stack-visual::-webkit-scrollbar-track {
@@ -659,10 +658,6 @@ select:focus {
   display: grid;
   place-items: center;
   color: var(--muted);
-}
-
-.stack-visual > .stack-segment {
-  min-width: 600px;
 }
 
 .stack-segment {
@@ -706,12 +701,12 @@ select:focus {
 
 .stack-segment.qd-cap > .segment-body,
 .stack-segment.qd-marker > .segment-body {
-  grid-template-columns: minmax(0, 1fr) minmax(92px, 34%);
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 6px;
 }
 
 .stack-segment.doped > .segment-body {
-  padding-right: 30px;
+  padding-right: 28px;
 }
 
 .stack-segment.repeat {
@@ -748,10 +743,10 @@ select:focus {
 
 .qd-dots {
   position: relative;
-  min-width: 92px;
+  min-width: 0;
   height: calc(100% - 10px);
   min-height: 18px;
-  margin: 5px 8px 5px 0;
+  margin: 5px 6px 5px 0;
   z-index: 1;
   border-radius: 999px;
   border: 1px solid rgba(191, 77, 111, 0.12);
@@ -764,11 +759,16 @@ select:focus {
 
 .repeat-children .stack-segment.qd-cap .qd-dots,
 .repeat-children .stack-segment.qd-marker .qd-dots {
-  min-width: 86px;
   height: calc(100% - 12px);
-  margin: 6px 6px 6px 0;
+  margin: 6px 5px 6px 0;
   background-color: rgba(255, 247, 250, 0.68);
   background-size: 12px 11px;
+}
+
+.repeat-children .stack-segment.qd-cap > .segment-body,
+.repeat-children .stack-segment.qd-marker > .segment-body {
+  grid-template-columns: minmax(0, 1fr) 84px;
+  gap: 5px;
 }
 
 .stack-segment.qd-marker {
@@ -1033,7 +1033,7 @@ select:focus {
   background: var(--accent);
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1260px) {
   .app-shell {
     grid-template-columns: 240px minmax(620px, 1fr);
   }
@@ -1043,7 +1043,7 @@ select:focus {
     border-left: 0;
     border-top: 1px solid var(--line);
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
+    grid-template-columns: minmax(0, 1fr) 420px;
   }
 }
 
