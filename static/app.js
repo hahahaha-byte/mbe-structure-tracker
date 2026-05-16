@@ -11,7 +11,8 @@ const state = {
   saveTimers: new Map(),
   waferSaveTimer: null,
   rowAnimations: new Map(),
-  rowAnimationTimer: null
+  rowAnimationTimer: null,
+  pendingExpandToggles: new Set()
 };
 
 const DEFAULT_SHORTCUTS = [
@@ -315,6 +316,11 @@ function queueMoveAnimation(itemId, direction) {
   }
 }
 
+function queueExpandAnimation(itemId, rows, expanding) {
+  queueRowAnimation(itemId, expanding ? "expand-parent" : "collapse-parent");
+  rows.forEach(({ item }) => queueRowAnimation(item.id, expanding ? "expand-child" : "collapse-child"));
+}
+
 function rowAnimationClass(item) {
   const kind = state.rowAnimations.get(item.id);
   if (!kind) return "";
@@ -477,8 +483,7 @@ async function handleTableClick(event) {
   try {
     if (action === "select-row") selectItem(id);
     if (action === "toggle-expand") {
-      toggleExpanded(id);
-      renderItems();
+      await toggleExpandedAnimated(id);
     }
     if (action === "add-inner-row") {
       selectItem(id);
@@ -1625,6 +1630,32 @@ function toggleExpanded(id) {
     state.collapsedItemIds.delete(id);
   } else {
     state.collapsedItemIds.add(id);
+  }
+}
+
+async function toggleExpandedAnimated(id) {
+  if (state.pendingExpandToggles.has(id)) return;
+  const map = childMap();
+  const item = state.current?.items.find((candidate) => candidate.id === id);
+  if (!item || !isRepeatItem(item, map)) return;
+  state.pendingExpandToggles.add(id);
+  try {
+    const expanded = isExpanded(item);
+    const rows = flattenItems(id, 1, map);
+    if (expanded) {
+      queueExpandAnimation(id, rows, false);
+      renderItems();
+      await delay(240);
+      state.collapsedItemIds.add(id);
+      renderItems();
+    } else {
+      state.collapsedItemIds.delete(id);
+      const expandedRows = flattenItems(id, 1, map);
+      queueExpandAnimation(id, expandedRows, true);
+      renderItems();
+    }
+  } finally {
+    state.pendingExpandToggles.delete(id);
   }
 }
 
