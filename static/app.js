@@ -14,12 +14,12 @@ const state = {
 };
 
 const DEFAULT_SHORTCUTS = [
-  { layer_name: "", material: "GaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
-  { layer_name: "", material: "AlGaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
-  { layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", periods: "", single_period_thickness_nm: "", doping: "1E19", growth_temp: "", is_quantum_dot: 0, notes: "" },
-  { layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", periods: "", single_period_thickness_nm: "", doping: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
-  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Be-doping 10hole/dot", growth_temp: "", is_quantum_dot: 0, notes: "" },
-  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Si-doping", growth_temp: "", is_quantum_dot: 0, notes: "" }
+  { layer_name: "", material: "GaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", doping_type: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "AlGaAs", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "", doping_type: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "接触层", material: "GaAs contact layer", thickness_nm: "200", periods: "", single_period_thickness_nm: "", doping: "1E19", doping_type: "N", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "波导层", material: "GaAs Waveguide layer", thickness_nm: "150", periods: "", single_period_thickness_nm: "", doping: "", doping_type: "", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Be-doping 10hole/dot", doping_type: "P", growth_temp: "", is_quantum_dot: 0, notes: "" },
+  { layer_name: "", material: "", thickness_nm: "", periods: "", single_period_thickness_nm: "", doping: "Si-doping", doping_type: "N", growth_temp: "", is_quantum_dot: 0, notes: "" }
 ];
 
 const STACK_VIEW_HEIGHT = 470;
@@ -183,7 +183,7 @@ function renderItems() {
   if (!rows.length) {
     els.layerTableBody.innerHTML = `
       <tr>
-        <td colspan="11" class="wafer-meta">暂无层结构</td>
+        <td colspan="12" class="wafer-meta">暂无层结构</td>
       </tr>
     `;
     return;
@@ -224,6 +224,9 @@ function renderItemRow(item, depth, map) {
   const dopingCell = dopingDisabled
     ? lockedCell("展开子层，在具体子层里填写掺杂", "展开子层填写")
     : `<input data-field="doping" value="${escapeAttr(item.doping)}" />`;
+  const dopingTypeCell = dopingDisabled
+    ? lockedCell("展开子层，在具体子层里选择 N/P", "-")
+    : dopingTypeSelect(item.doping_type);
   return `
     <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
       <td class="action-cell">
@@ -248,6 +251,7 @@ function renderItemRow(item, depth, map) {
       <td><input data-field="periods" value="${escapeAttr(blankNumber(item.periods))}" /></td>
       <td>${singlePeriodCell}</td>
       <td>${dopingCell}</td>
+      <td class="doping-type-cell">${dopingTypeCell}</td>
       <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" /></td>
       <td class="checkbox-cell"><input data-field="is_quantum_dot" type="checkbox" ${item.is_quantum_dot ? "checked" : ""} ${qdDisabled ? "disabled" : ""} /></td>
       <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
@@ -257,6 +261,28 @@ function renderItemRow(item, depth, map) {
 
 function lockedCell(message, text) {
   return `<span class="locked-cell" data-lock-message="${escapeAttr(message)}" title="${escapeAttr(message)}">${escapeHtml(text)}</span>`;
+}
+
+function dopingTypeSelect(value, attrs = "") {
+  const current = normalizeDopingType(value);
+  return `
+    <select data-field="doping_type" ${attrs}>
+      <option value="" ${current ? "" : "selected"}>-</option>
+      <option value="N" ${current === "N" ? "selected" : ""}>N</option>
+      <option value="P" ${current === "P" ? "selected" : ""}>P</option>
+    </select>
+  `;
+}
+
+function shortcutDopingTypeSelect(value, index) {
+  const current = normalizeDopingType(value);
+  return `
+    <select data-shortcut-index="${index}" data-shortcut-field="doping_type">
+      <option value="" ${current ? "" : "selected"}>-</option>
+      <option value="N" ${current === "N" ? "selected" : ""}>N</option>
+      <option value="P" ${current === "P" ? "selected" : ""}>P</option>
+    </select>
+  `;
 }
 
 function queueRowAnimation(itemId, kind = "insert") {
@@ -384,7 +410,8 @@ function handleItemInput(event) {
   const map = childMap();
   const wasRepeat = isRepeatItem(item, map);
   const field = input.dataset.field;
-  item[field] = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  const value = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  item[field] = field === "doping_type" ? normalizeDopingType(value) : value;
   if (field === "is_quantum_dot") {
     if (item.is_quantum_dot && ["", "0", "0.0"].includes(String(item.thickness_nm ?? "").trim())) {
       item.thickness_nm = "";
@@ -495,6 +522,7 @@ async function addInnerLayer() {
     selected.item_type = "repeat";
     selected.material = "";
     selected.doping = "";
+    selected.doping_type = "";
     selected.thickness_nm = null;
     scheduleItemSave(selected);
     parent = selected;
@@ -505,6 +533,7 @@ async function addInnerLayer() {
   }
   parent.material = "";
   parent.doping = "";
+  parent.doping_type = "";
   parent.thickness_nm = null;
   parent.single_period_thickness_nm = null;
   parent.is_quantum_dot = 0;
@@ -916,6 +945,7 @@ function csvForWafers(wafers) {
     "periods",
     "single_period_thickness_nm",
     "doping",
+    "doping_type",
     "growth_temp",
     "is_quantum_dot",
     "notes"
@@ -942,6 +972,7 @@ function writeCsvItemRows(rows, wafer, map, parentId, prefix) {
       blankNumber(item.periods),
       blankNumber(item.single_period_thickness_nm),
       item.doping,
+      item.doping_type,
       item.growth_temp,
       item.is_quantum_dot,
       item.notes
@@ -1118,7 +1149,7 @@ function drawReportHeader(ctx, wafer, width) {
   ctx.fillText(`${formatNumber(stats.totalThickness)} nm`, width - 40, 48);
   ctx.font = "14px sans-serif";
   ctx.fillStyle = "#68726b";
-  ctx.fillText(`${stats.layerCount} 层 · ${stats.repeatCount} 重复层 · ${stats.dopedItems.length} 掺杂层`, width - 40, 76);
+  ctx.fillText(`${stats.layerCount} 层 · ${stats.repeatCount} 重复层 · ${formatNumber(stats.qdLayerCount)} QD · ${stats.dopedItems.length} 掺杂层`, width - 40, 76);
   ctx.textAlign = "left";
 }
 
@@ -1469,6 +1500,7 @@ function normalizeRepeatState(item, map = childMap()) {
     if (hasChildren) {
       item.material = "";
       item.doping = "";
+      item.doping_type = "";
       item.single_period_thickness_nm = null;
       item.is_quantum_dot = 0;
     }
@@ -1606,10 +1638,26 @@ function renderStats(stats) {
     `)
     .join("");
   const dopedRows = stats.dopedItems
-    .map((item) => `
+    .map((detail) => `
       <div class="stat-row">
-        <span>${escapeHtml(item.layer_name || item.material || "未命名层")}</span>
-        <strong>${escapeHtml(item.doping)}</strong>
+        <span>${escapeHtml(detail.path)}</span>
+        <strong>${escapeHtml(dopingDetailText(detail))}</strong>
+      </div>
+    `)
+    .join("");
+  const qdRows = stats.qdItems
+    .map((detail) => `
+      <div class="stat-row">
+        <span>${escapeHtml(detail.path)}</span>
+        <strong>${escapeHtml(qdDetailText(detail))}</strong>
+      </div>
+    `)
+    .join("");
+  const activeRegionRows = stats.activeRegionDopedItems
+    .map((detail) => `
+      <div class="stat-row">
+        <span>${escapeHtml(detail.path)}</span>
+        <strong>${escapeHtml(dopingDetailText(detail))}</strong>
       </div>
     `)
     .join("");
@@ -1619,6 +1667,8 @@ function renderStats(stats) {
       <div class="metric"><strong>${stats.layerCount}</strong><span>层</span></div>
       <div class="metric"><strong>${stats.repeatCount}</strong><span>重复层</span></div>
       <div class="metric"><strong>${stats.dopedItems.length}</strong><span>掺杂层</span></div>
+      <div class="metric"><strong>${formatNumber(stats.qdLayerCount)}</strong><span>量子点层数</span></div>
+      <div class="metric"><strong>${formatNumber(stats.qdDopedLayerCount)}</strong><span>QD 掺杂层数</span></div>
     </div>
     <div>
       <div class="section-title"><h2>材料厚度</h2></div>
@@ -1628,6 +1678,14 @@ function renderStats(stats) {
       <div class="section-title"><h2>掺杂信息</h2></div>
       <div class="doping-list">${dopedRows || `<span class="wafer-meta">无掺杂文本</span>`}</div>
     </div>
+    <div>
+      <div class="section-title"><h2>量子点掺杂</h2></div>
+      <div class="doping-list">${qdRows || `<span class="wafer-meta">无量子点层</span>`}</div>
+    </div>
+    <div>
+      <div class="section-title"><h2>有源区掺杂</h2></div>
+      <div class="doping-list">${activeRegionRows || `<span class="wafer-meta">无有源区掺杂文本</span>`}</div>
+    </div>
   `;
 }
 
@@ -1636,19 +1694,25 @@ function computeStats(map) {
     totalThickness: 0,
     materialTotals: {},
     dopedItems: [],
+    qdItems: [],
+    qdDopedItems: [],
+    activeRegionDopedItems: [],
+    qdLayerCount: 0,
+    qdDopedLayerCount: 0,
     layerCount: 0,
     repeatCount: 0
   };
   (map.get(null) || []).forEach((item) => {
-    const result = computeItem(item, map, stats, 1);
+    const result = computeItem(item, map, stats, 1, []);
     stats.totalThickness += result.thickness;
   });
   return stats;
 }
 
-function computeItem(item, map, stats = null, multiplier = 1) {
+function computeItem(item, map, stats = null, multiplier = 1, ancestors = []) {
   const repeat = isRepeatItem(item, map);
-  if (!repeat && stats && hasDoping(item)) stats.dopedItems.push(item);
+  const path = [...ancestors, item];
+  if (stats) collectItemStats(stats, item, path, multiplier, repeat);
   if (repeat) {
     if (stats) stats.repeatCount += 1;
     const periods = numberValue(item.periods) || 1;
@@ -1656,12 +1720,11 @@ function computeItem(item, map, stats = null, multiplier = 1) {
     if (children.length) {
       let periodThickness = 0;
       children.forEach((child) => {
-        const childResult = computeItem(child, map, stats, multiplier * periods);
+        const childResult = computeItem(child, map, stats, multiplier * periods, path);
         periodThickness += childResult.thickness;
       });
       return { thickness: periodThickness * periods };
     }
-    if (stats && hasDoping(item)) stats.dopedItems.push(item);
     const single = numberValue(item.single_period_thickness_nm);
     const total = single * periods;
     addMaterial(stats, item.material, total * multiplier);
@@ -1672,6 +1735,55 @@ function computeItem(item, map, stats = null, multiplier = 1) {
   const effective = isQuantumDot(item) ? 0 : visible;
   addMaterial(stats, item.material, effective * multiplier);
   return { thickness: effective };
+}
+
+function collectItemStats(stats, item, path, multiplier, repeat) {
+  const detail = statDetail(item, path, multiplier);
+  if (hasDoping(item)) {
+    stats.dopedItems.push(detail);
+    if (path.some(isActiveRegionItem)) stats.activeRegionDopedItems.push(detail);
+  }
+  if (!repeat && isQuantumDot(item)) {
+    stats.qdLayerCount += multiplier;
+    stats.qdItems.push(detail);
+    if (hasDoping(item)) {
+      stats.qdDopedItems.push(detail);
+      stats.qdDopedLayerCount += multiplier;
+    }
+  }
+}
+
+function statDetail(item, path, multiplier) {
+  return {
+    item,
+    path: path.map(itemDisplayName).join(" / "),
+    occurrences: multiplier,
+    doping: item.doping || "",
+    doping_type: normalizeDopingType(item.doping_type),
+    is_quantum_dot: isQuantumDot(item)
+  };
+}
+
+function itemDisplayName(item) {
+  return item.layer_name || item.material || "未命名层";
+}
+
+function dopingDetailText(detail, emptyText = "未掺杂") {
+  const type = normalizeDopingType(detail.doping_type);
+  const text = String(detail.doping || "").trim();
+  const prefix = detail.occurrences > 1 ? `×${formatNumber(detail.occurrences)} · ` : "";
+  if (type && text) return `${prefix}${type} · ${text}`;
+  if (type) return `${prefix}${type} · 未填浓度`;
+  if (text) return `${prefix}${text}`;
+  return `${prefix}${emptyText}`;
+}
+
+function qdDetailText(detail) {
+  return dopingDetailText(detail, "未掺杂");
+}
+
+function isActiveRegionItem(item) {
+  return /有源区|active/i.test(`${item.layer_name || ""} ${item.material || ""}`);
 }
 
 function isQuantumDot(item) {
@@ -1710,7 +1822,16 @@ function addMaterial(stats, material, thickness) {
 
 function hasDoping(item) {
   const text = String(item.doping || "").trim().toLowerCase();
-  return text !== "" && text !== "0" && text !== "0.0";
+  const type = normalizeDopingType(item.doping_type);
+  return type !== "" || (text !== "" && text !== "0" && text !== "0.0");
+}
+
+function normalizeDopingType(value) {
+  const text = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/型|掺杂|参杂/g, "");
+  return text === "N" || text === "P" ? text : "";
 }
 
 function loadShortcuts() {
@@ -1739,6 +1860,7 @@ function normalizeShortcut(shortcut) {
     periods: shortcut.periods || "",
     single_period_thickness_nm: shortcut.single_period_thickness_nm || "",
     doping: shortcut.doping || "",
+    doping_type: normalizeDopingType(shortcut.doping_type),
     growth_temp: shortcut.growth_temp || "",
     is_quantum_dot: shortcut.is_quantum_dot ? 1 : 0,
     notes: shortcut.notes || "",
@@ -1747,7 +1869,7 @@ function normalizeShortcut(shortcut) {
 }
 
 function renderShortcuts() {
-  const header = ["层名", "材料", "厚度 nm / QD ML", "周期", "单周期 nm", "掺杂浓度", "生长温度", "QD", "备注", "操作"]
+  const header = ["层名", "材料", "厚度 nm / QD ML", "周期", "单周期 nm", "掺杂浓度", "N/P", "生长温度", "QD", "备注", "操作"]
     .map((label) => `<div class="grid-label">${label}</div>`)
     .join("");
   const rows = state.shortcuts
@@ -1762,6 +1884,7 @@ function renderShortcuts() {
       <input data-shortcut-index="${index}" data-shortcut-field="periods" value="${escapeAttr(shortcut.periods)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="single_period_thickness_nm" value="${escapeAttr(shortcut.single_period_thickness_nm)}" />
       <input data-shortcut-index="${index}" data-shortcut-field="doping" value="${escapeAttr(shortcut.doping)}" />
+      ${shortcutDopingTypeSelect(shortcut.doping_type, index)}
       <input data-shortcut-index="${index}" data-shortcut-field="growth_temp" value="${escapeAttr(shortcut.growth_temp)}" />
       <label class="shortcut-check" title="量子点层">
         <input data-shortcut-index="${index}" data-shortcut-field="is_quantum_dot" type="checkbox" ${shortcut.is_quantum_dot ? "checked" : ""} />
@@ -1783,7 +1906,8 @@ function handleShortcutInput(event) {
   if (!input || !input.dataset.shortcutField) return;
   const index = Number(input.dataset.shortcutIndex);
   const field = input.dataset.shortcutField;
-  state.shortcuts[index][field] = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  const value = input.type === "checkbox" ? (input.checked ? 1 : 0) : input.value;
+  state.shortcuts[index][field] = field === "doping_type" ? normalizeDopingType(value) : value;
   saveShortcuts();
 }
 
@@ -1857,6 +1981,7 @@ function itemToShortcut(item, map) {
     periods: blankNumber(item.periods),
     single_period_thickness_nm: blankNumber(item.single_period_thickness_nm),
     doping: item.doping || "",
+    doping_type: normalizeDopingType(item.doping_type),
     growth_temp: item.growth_temp || "",
     is_quantum_dot: item.is_quantum_dot ? 1 : 0,
     notes: item.notes || "",
@@ -1888,6 +2013,7 @@ function shortcutToTree(shortcut) {
     periods: normalized.periods || "",
     single_period_thickness_nm: normalized.single_period_thickness_nm || "",
     doping: normalized.doping || "",
+    doping_type: normalizeDopingType(normalized.doping_type),
     growth_temp: normalized.growth_temp || "",
     is_quantum_dot: isQd ? 1 : 0,
     notes: normalized.notes || "",

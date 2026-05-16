@@ -17,12 +17,13 @@ ITEM_FIELDS = (
     "periods",
     "single_period_thickness_nm",
     "doping",
+    "doping_type",
     "growth_temp",
     "notes",
     "is_quantum_dot",
 )
 
-TEXT_ITEM_FIELDS = {"item_type", "layer_name", "material", "doping", "growth_temp", "notes"}
+TEXT_ITEM_FIELDS = {"item_type", "layer_name", "material", "doping", "doping_type", "growth_temp", "notes"}
 FLOAT_ITEM_FIELDS = {"thickness_nm", "single_period_thickness_nm"}
 INT_ITEM_FIELDS = {"parent_id", "order_index", "periods", "is_quantum_dot"}
 
@@ -75,6 +76,7 @@ def init_db(db_path: Path | str) -> None:
                 periods INTEGER,
                 single_period_thickness_nm REAL,
                 doping TEXT DEFAULT '',
+                doping_type TEXT DEFAULT '',
                 growth_temp TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
                 is_quantum_dot INTEGER NOT NULL DEFAULT 0,
@@ -97,6 +99,13 @@ def init_db(db_path: Path | str) -> None:
             );
             """
         )
+        ensure_column(conn, "structure_item", "doping_type", "TEXT DEFAULT ''")
+
+
+def ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> Optional[Dict[str, Any]]:
@@ -150,6 +159,13 @@ def normalize_doping(value: Any) -> str:
     return text
 
 
+def normalize_doping_type(value: Any) -> str:
+    text = clean_text(value).upper().replace("型", "").replace("掺杂", "").replace("参杂", "")
+    if text in {"N", "P"}:
+        return text
+    return ""
+
+
 def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base = dict(existing or {})
     qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
@@ -168,6 +184,7 @@ def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None
             base[field] = clean_int(value)
     base["item_type"] = base.get("item_type") if base.get("item_type") in {"layer", "repeat"} else "layer"
     base["doping"] = normalize_doping(base.get("doping"))
+    base["doping_type"] = normalize_doping_type(base.get("doping_type"))
     base["periods"] = base.get("periods") or (1 if base["item_type"] == "repeat" else None)
     base["is_quantum_dot"] = 1 if base.get("is_quantum_dot") else 0
     return base
@@ -185,7 +202,7 @@ def list_wafers(conn: sqlite3.Connection, search: str = "") -> List[Dict[str, An
         SELECT
             w.*,
             COUNT(i.id) AS item_count,
-            SUM(CASE WHEN COALESCE(i.doping, '') <> '' THEN 1 ELSE 0 END) AS doped_item_count
+            SUM(CASE WHEN COALESCE(i.doping, '') <> '' OR COALESCE(i.doping_type, '') <> '' THEN 1 ELSE 0 END) AS doped_item_count
         FROM wafer w
         LEFT JOIN structure_item i ON i.wafer_id = w.id
         {where}
@@ -334,9 +351,9 @@ def create_item(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -
         INSERT INTO structure_item (
             wafer_id, parent_id, item_type, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
-            growth_temp, notes, is_quantum_dot, created_at, updated_at
+            doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             wafer_id,
@@ -349,6 +366,7 @@ def create_item(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -
             item.get("periods"),
             item.get("single_period_thickness_nm"),
             item.get("doping", ""),
+            item.get("doping_type", ""),
             item.get("growth_temp", ""),
             item.get("notes", ""),
             item.get("is_quantum_dot", 0),
@@ -385,7 +403,7 @@ def update_item(conn: sqlite3.Connection, item_id: int, data: Dict[str, Any]) ->
         UPDATE structure_item SET
             item_type = ?, layer_name = ?, material = ?, thickness_nm = ?,
             periods = ?, single_period_thickness_nm = ?, doping = ?,
-            growth_temp = ?, notes = ?, is_quantum_dot = ?, updated_at = ?
+            doping_type = ?, growth_temp = ?, notes = ?, is_quantum_dot = ?, updated_at = ?
         WHERE id = ?
         """,
         (
@@ -396,6 +414,7 @@ def update_item(conn: sqlite3.Connection, item_id: int, data: Dict[str, Any]) ->
             item.get("periods"),
             item.get("single_period_thickness_nm"),
             item.get("doping", ""),
+            item.get("doping_type", ""),
             item.get("growth_temp", ""),
             item.get("notes", ""),
             item.get("is_quantum_dot", 0),
@@ -474,9 +493,9 @@ def insert_tree_from_payload(
         INSERT INTO structure_item (
             wafer_id, parent_id, item_type, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
-            growth_temp, notes, is_quantum_dot, created_at, updated_at
+            doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             wafer_id,
@@ -489,6 +508,7 @@ def insert_tree_from_payload(
             item.get("periods"),
             item.get("single_period_thickness_nm"),
             item.get("doping", ""),
+            item.get("doping_type", ""),
             item.get("growth_temp", ""),
             item.get("notes", ""),
             item.get("is_quantum_dot", 0),
@@ -571,9 +591,9 @@ def clone_item_tree(
         INSERT INTO structure_item (
             wafer_id, parent_id, item_type, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
-            growth_temp, notes, is_quantum_dot, created_at, updated_at
+            doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             target_wafer_id,
@@ -586,6 +606,7 @@ def clone_item_tree(
             source["periods"],
             source["single_period_thickness_nm"],
             source["doping"],
+            source.get("doping_type", ""),
             source["growth_temp"],
             source["notes"],
             source["is_quantum_dot"],
