@@ -51,6 +51,7 @@ function bindElements() {
   els.statusText = document.getElementById("statusText");
   els.shortcutList = document.getElementById("shortcutList");
   els.undoDeleteBtn = document.getElementById("undoDeleteBtn");
+  els.jsonImportInput = document.getElementById("jsonImportInput");
   els.waferFields = {
     wafer_code: document.getElementById("waferCode"),
     size: document.getElementById("waferSize"),
@@ -62,7 +63,8 @@ function bindElements() {
 
 function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
-  document.getElementById("importExcelBtn").addEventListener("click", importExcel);
+  document.getElementById("importJsonBtn").addEventListener("click", () => els.jsonImportInput.click());
+  els.jsonImportInput.addEventListener("change", importJsonFiles);
   document.getElementById("addShortcutBtn").addEventListener("click", addShortcut);
   els.searchInput.addEventListener("input", debounce(() => loadWafers(), 180));
 
@@ -308,8 +310,12 @@ async function handleToolbarClick(event) {
     if (action === "copy-item") copySelectedItem();
     if (action === "paste-item") await pasteItem();
     if (action === "duplicate-wafer") await duplicateCurrentWafer();
-    if (action === "export-json") downloadExport("json");
-    if (action === "export-csv") downloadExport("csv");
+    if (action === "export-json-current") downloadExport("json", "current");
+    if (action === "export-csv-current") downloadExport("csv", "current");
+    if (action === "export-png-current") await exportPng("current");
+    if (action === "export-json-all") downloadExport("json", "all");
+    if (action === "export-csv-all") downloadExport("csv", "all");
+    if (action === "export-png-all") await exportPng("all");
   } catch (error) {
     showError(error);
   }
@@ -651,24 +657,282 @@ async function duplicateCurrentWafer() {
   await loadWafers(payload.wafer.id);
 }
 
-async function importExcel() {
-  showStatus("导入中");
+async function importJsonFiles(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  showStatus("JSON 导入中");
   try {
-    const payload = await api("/api/import/excel", {
+    const parsedFiles = await Promise.all(files.map(readJsonImportFile));
+    const payload = await api("/api/import/json", {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify({ files: parsedFiles })
     });
-    showStatus(`已导入 ${payload.imported.length} 个`);
+    const errorText = payload.errors?.length ? `，失败 ${payload.errors.length} 个` : "";
+    showStatus(`已导入 ${payload.imported.length} 个${errorText}`);
     await loadWafers(state.current?.id || null);
   } catch (error) {
     showError(error);
+  } finally {
+    event.target.value = "";
   }
 }
 
-function downloadExport(kind) {
-  const waferId = state.current?.id;
-  if (!waferId) return;
-  window.location.href = `/api/export/${kind}?wafer_id=${waferId}`;
+function readJsonImportFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        resolve({ name: file.name, payload: JSON.parse(reader.result) });
+      } catch (error) {
+        reject(new Error(`${file.name} 不是有效 JSON`));
+      }
+    };
+    reader.onerror = () => reject(new Error(`${file.name} 读取失败`));
+    reader.readAsText(file);
+  });
+}
+
+function downloadExport(kind, scope = "current") {
+  const params = new URLSearchParams();
+  if (scope === "current") {
+    const waferId = state.current?.id;
+    if (!waferId) return;
+    params.set("wafer_id", waferId);
+  }
+  const query = params.toString();
+  window.location.href = `/api/export/${kind}${query ? `?${query}` : ""}`;
+}
+
+async function exportPng(scope = "current") {
+  const wafers = scope === "current" ? [state.current].filter(Boolean) : await loadAllExportWafers();
+  if (!wafers.length) return;
+  showStatus(scope === "current" ? "正在导出图片" : `正在导出 ${wafers.length} 张图片`);
+  for (const wafer of wafers) {
+    await downloadWaferPng(wafer);
+    await delay(120);
+  }
+  showStatus(scope === "current" ? "图片已导出" : "批量图片已导出");
+}
+
+async function loadAllExportWafers() {
+  const payload = await api("/api/export/json");
+  return payload.wafers || [];
+}
+
+async function downloadWaferPng(wafer) {
+  const canvas = renderWaferPngCanvas(wafer);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (!blob) throw new Error("图片生成失败");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `${safeFilename(wafer.wafer_code || "wafer")}-structure.png`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function renderWaferPngCanvas(wafer) {
+  const map = childMapForItems(wafer.items || []);
+  const roots = map.get(null) || [];
+  const segments = stackCanvasParts(roots, map, true, STACK_VIEW_HEIGHT);
+  const stackHeight = Math.max(STACK_VIEW_HEIGHT, Math.ceil(sumCanvasHeights(segments)));
+  const width = 980;
+  const height = stackHeight + 150;
+  const scale = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  drawReportHeader(ctx, wafer, width);
+  drawStackParts(ctx, segments, map, 40, 110, 620, stackHeight);
+  return canvas;
+}
+
+function drawReportHeader(ctx, wafer, width) {
+  const stats = computeStats(childMapForItems(wafer.items || []));
+  ctx.fillStyle = "#18201d";
+  ctx.font = "700 26px sans-serif";
+  ctx.fillText(wafer.wafer_code || "未命名片号", 40, 48);
+  ctx.font = "16px sans-serif";
+  ctx.fillStyle = "#68726b";
+  ctx.fillText(`${wafer.structure_name || "未命名结构"} · ${wafer.size || ""}`, 40, 78);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "#18201d";
+  ctx.font = "700 20px sans-serif";
+  ctx.fillText(`${formatNumber(stats.totalThickness)} nm`, width - 40, 48);
+  ctx.font = "14px sans-serif";
+  ctx.fillStyle = "#68726b";
+  ctx.fillText(`${stats.layerCount} 层 · ${stats.repeatCount} 重复层 · ${stats.dopedItems.length} 掺杂层`, width - 40, 76);
+  ctx.textAlign = "left";
+}
+
+function stackCanvasParts(items, map, fixedScale, availableHeight) {
+  const parts = [];
+  const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
+  const totalThickness = visibleItems.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
+  items.forEach((item, index) => {
+    if (!isRepeatItem(item, map) && isQuantumDot(item)) {
+      const previous = lastStackSegment(parts);
+      if (previous) previous.qdMarkers.push(item);
+      else parts.push({ qdMarker: item, height: STACK_MIN_QD_HEIGHT });
+      return;
+    }
+    const computed = computeItem(item, map);
+    const repeat = isRepeatItem(item, map);
+    const height = fixedScale
+      ? visualFixedScaleHeight(computed.thickness, repeat, false)
+      : visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
+    parts.push({ item, index, computed, height, qdMarkers: [] });
+  });
+  return parts;
+}
+
+function sumCanvasHeights(parts) {
+  return parts.reduce((sum, part) => sum + part.height, 0);
+}
+
+function drawStackParts(ctx, parts, map, x, y, width, stackHeight) {
+  ctx.save();
+  roundedRect(ctx, x, y, width, stackHeight, 10);
+  ctx.clip();
+  ctx.fillStyle = "#f9faf8";
+  ctx.fillRect(x, y, width, stackHeight);
+  let cursor = y;
+  parts.forEach((part) => {
+    if (part.qdMarker) {
+      drawQdMarkerSegment(ctx, part.qdMarker, x, cursor, width, part.height);
+    } else {
+      drawCanvasSegment(ctx, part, map, x, cursor, width, part.height);
+    }
+    cursor += part.height;
+  });
+  ctx.restore();
+  ctx.strokeStyle = "#d9ded6";
+  ctx.lineWidth = 1;
+  roundedRect(ctx, x, y, width, stackHeight, 10);
+  ctx.stroke();
+}
+
+function drawCanvasSegment(ctx, part, map, x, y, width, height) {
+  const item = part.item;
+  const repeat = isRepeatItem(item, map);
+  const children = map.get(item.id) || [];
+  ctx.fillStyle = materialColor(item.material || item.layer_name || String(part.index));
+  ctx.fillRect(x, y, width, height);
+  if (repeat) drawRepeatPattern(ctx, x, y, width, height);
+  ctx.strokeStyle = "rgba(24,32,29,0.16)";
+  ctx.strokeRect(x, y, width, height);
+  if (part.qdMarkers.length) drawQdDotsCanvas(ctx, x + 12, y + height - 17, width - 24, part.qdMarkers);
+  drawSegmentText(ctx, item.layer_name || item.material || "未命名层", stackMeta(item, part.computed, map, part.qdMarkers), x, y, width, height);
+  if (hasDoping(item)) drawDopedBadge(ctx, x + width - 30, y + height / 2);
+  if (repeat && children.length && height > 74) {
+    const childParts = stackCanvasParts(children, map, false, Math.max(28, height - 40));
+    drawStackParts(ctx, childParts, map, x + 28, y + 38, width - 46, Math.max(28, height - 44));
+  }
+}
+
+function drawQdMarkerSegment(ctx, item, x, y, width, height) {
+  ctx.fillStyle = materialColor(item.material || item.layer_name || "QD");
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = "rgba(191,77,111,0.35)";
+  ctx.strokeRect(x, y, width, height);
+  drawQdDotsCanvas(ctx, x + 12, y + Math.max(6, height - 16), width - 24, [item]);
+  drawSegmentText(ctx, item.layer_name || item.material || "QD", stackMeta(item, { thickness: 0 }, new Map()), x, y, width, height);
+}
+
+function drawSegmentText(ctx, name, meta, x, y, width, height) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x + 8, y + 2, width - 56, height - 4);
+  ctx.clip();
+  ctx.fillStyle = "#121714";
+  ctx.font = "700 16px sans-serif";
+  ctx.fillText(name, x + 14, y + Math.min(24, Math.max(18, height / 2)));
+  if (height >= 42) {
+    ctx.fillStyle = "rgba(24,32,29,0.72)";
+    ctx.font = "14px sans-serif";
+    ctx.fillText(meta, x + 14, y + Math.min(46, Math.max(34, height / 2 + 18)));
+  }
+  ctx.restore();
+}
+
+function drawQdDotsCanvas(ctx, x, y, width, items) {
+  ctx.fillStyle = "rgba(191,77,111,0.92)";
+  const count = Math.max(8, Math.min(42, Math.floor(width / 16)));
+  for (let index = 0; index < count; index += 1) {
+    ctx.beginPath();
+    ctx.arc(x + 8 + index * 15, y + 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawRepeatPattern(ctx, x, y, width, height) {
+  ctx.save();
+  ctx.strokeStyle = "rgba(92,109,57,0.2)";
+  ctx.lineWidth = 8;
+  for (let offset = -height; offset < width; offset += 18) {
+    ctx.beginPath();
+    ctx.moveTo(x + offset, y + height);
+    ctx.lineTo(x + offset + height, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#5c6d39";
+  ctx.fillRect(x, y, 6, height);
+  ctx.restore();
+}
+
+function drawDopedBadge(ctx, x, y) {
+  ctx.fillStyle = "#f2a33a";
+  ctx.beginPath();
+  ctx.arc(x, y, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#3c2607";
+  ctx.font = "800 16px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("D", x, y + 1);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
+function roundedRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function childMapForItems(items) {
+  const map = new Map();
+  (items || []).forEach((item) => {
+    const key = item.parent_id || null;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(item);
+  });
+  map.forEach((group) => group.sort((a, b) => a.order_index - b.order_index || a.id - b.id));
+  return map;
+}
+
+function safeFilename(value) {
+  return String(value || "wafer").replace(/[\\/:*?"<>|]+/g, "_");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function selectItem(id) {
@@ -849,21 +1113,33 @@ function renderStack(map) {
 
 function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT, fixedScale = false) {
   const parts = [];
-  let pendingQd = [];
   const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
   const totalThickness = visibleItems.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
   items.forEach((item, index) => {
     if (!isRepeatItem(item, map) && isQuantumDot(item)) {
-      pendingQd.push(item);
+      const previous = lastStackSegment(parts);
+      if (previous) {
+        previous.qdMarkers.push(item);
+      } else {
+        parts.push({ qdMarker: item });
+      }
       return;
     }
-    parts.push(renderStackSegment(item, map, depth, pendingQd, index, totalThickness, availableHeight, fixedScale));
-    pendingQd = [];
+    parts.push({ item, index, qdMarkers: [] });
   });
-  pendingQd.forEach((item) => {
-    parts.push(renderQdMarker(item, depth));
-  });
-  return parts.join("");
+  return parts
+    .map((part) => {
+      if (part.qdMarker) return renderQdMarker(part.qdMarker, depth);
+      return renderStackSegment(part.item, map, depth, part.qdMarkers, part.index, totalThickness, availableHeight, fixedScale);
+    })
+    .join("");
+}
+
+function lastStackSegment(parts) {
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    if (parts[index].item) return parts[index];
+  }
+  return null;
 }
 
 function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, availableHeight, fixedScale) {

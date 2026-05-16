@@ -721,6 +721,106 @@ def import_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], items: It
     return get_wafer(conn, wafer_id)
 
 
+def import_json_wafers(conn: sqlite3.Connection, payload: Any) -> Dict[str, Any]:
+    if isinstance(payload, dict) and "wafers" in payload:
+        wafers = payload.get("wafers") or []
+    elif isinstance(payload, list):
+        wafers = payload
+    elif isinstance(payload, dict):
+        wafers = [payload]
+    else:
+        raise ValueError("json_import_payload_invalid")
+
+    imported = []
+    errors = []
+    for index, wafer_data in enumerate(wafers, start=1):
+        try:
+            wafer = import_json_wafer(conn, wafer_data)
+            imported.append({"wafer_code": wafer["wafer_code"], "item_count": len(wafer["items"])})
+        except Exception as exc:
+            label = wafer_data.get("wafer_code") if isinstance(wafer_data, dict) else f"#{index}"
+            errors.append({"wafer_code": label or f"#{index}", "error": str(exc)})
+    return {"imported": imported, "errors": errors}
+
+
+def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(wafer_data, dict):
+        raise ValueError("wafer_payload_invalid")
+    code = clean_text(wafer_data.get("wafer_code"))
+    if not code:
+        raise ValueError("wafer_code_required")
+
+    now = utc_now()
+    existing = row_to_dict(conn.execute("SELECT * FROM wafer WHERE wafer_code = ?", (code,)).fetchone())
+    if existing:
+        wafer_id = int(existing["id"])
+        conn.execute(
+            """
+            UPDATE wafer SET size = ?, structure_name = ?, growth_date = ?, notes = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                clean_text(wafer_data.get("size")),
+                clean_text(wafer_data.get("structure_name")),
+                clean_text(wafer_data.get("growth_date")),
+                clean_text(wafer_data.get("notes")),
+                now,
+                wafer_id,
+            ),
+        )
+        conn.execute("DELETE FROM structure_item WHERE wafer_id = ?", (wafer_id,))
+    else:
+        conn.execute(
+            """
+            INSERT INTO wafer (wafer_code, size, structure_name, growth_date, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                code,
+                clean_text(wafer_data.get("size")),
+                clean_text(wafer_data.get("structure_name")),
+                clean_text(wafer_data.get("growth_date")),
+                clean_text(wafer_data.get("notes")),
+                now,
+                now,
+            ),
+        )
+        wafer_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+    roots = json_item_roots(wafer_data.get("items") or [])
+    for index, root in enumerate(roots):
+        payload = dict(root)
+        payload["order_index"] = index
+        insert_tree_from_payload(conn, wafer_id, payload, None, index, {})
+    return get_wafer(conn, wafer_id)
+
+
+def json_item_roots(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    item_list = [dict(item) for item in items if isinstance(item, dict)]
+    if not item_list:
+        return []
+    if any("children" in item for item in item_list):
+        roots = [item for item in item_list if not clean_int(item.get("parent_id"))]
+        return sorted(roots or item_list, key=lambda item: (clean_int(item.get("order_index")) or 0, clean_int(item.get("id")) or 0))
+
+    by_id = {clean_int(item.get("id")): item for item in item_list if clean_int(item.get("id")) is not None}
+    children: Dict[Optional[int], List[Dict[str, Any]]] = {}
+    for item in item_list:
+        parent_id = clean_int(item.get("parent_id"))
+        if parent_id not in by_id:
+            parent_id = None
+        children.setdefault(parent_id, []).append(item)
+    for group in children.values():
+        group.sort(key=lambda item: (clean_int(item.get("order_index")) or 0, clean_int(item.get("id")) or 0))
+
+    def attach(item: Dict[str, Any]) -> Dict[str, Any]:
+        payload = dict(item)
+        payload["children"] = [attach(child) for child in children.get(clean_int(item.get("id")), [])]
+        return payload
+
+    return [attach(root) for root in children.get(None, [])]
+
+
 def touch_wafer(conn: sqlite3.Connection, wafer_id: int) -> None:
     conn.execute("UPDATE wafer SET updated_at = ? WHERE id = ?", (utc_now(), wafer_id))
 

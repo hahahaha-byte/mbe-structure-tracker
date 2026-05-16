@@ -23,6 +23,7 @@ from mbe_tracker.database import (
     export_payload,
     get_wafer,
     import_wafer,
+    import_json_wafers,
     init_db,
     list_wafers,
     move_item,
@@ -204,6 +205,10 @@ class MBEHandler(BaseHTTPRequestHandler):
                 result = import_excel(conn, body)
                 json_response(self, HTTPStatus.OK, result)
                 return
+            if method == "POST" and parts == ["api", "import", "json"]:
+                result = import_json(conn, body)
+                json_response(self, HTTPStatus.OK, result)
+                return
             if method == "GET" and parts == ["api", "export", "json"]:
                 wafer_id = optional_int(query.get("wafer_id", [""])[0])
                 text_response(self, HTTPStatus.OK, payload_json(conn, wafer_id), "application/json; charset=utf-8", "mbe-wafers.json")
@@ -247,6 +252,25 @@ def import_excel(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
         except Exception as exc:
             errors.append({"file": file_path.name, "error": str(exc)})
     return {"imported": imported, "errors": errors, "directory": str(directory), "pattern": pattern}
+
+
+def import_json(conn: Any, body: Dict[str, Any]) -> Dict[str, Any]:
+    files = body.get("files")
+    if not files:
+        result = import_json_wafers(conn, body.get("payload", body))
+        return {"imported": result["imported"], "errors": result["errors"]}
+
+    imported = []
+    errors = []
+    for file_info in files:
+        name = file_info.get("name") or "json"
+        try:
+            result = import_json_wafers(conn, file_info.get("payload"))
+            imported.extend([{**item, "file": name} for item in result["imported"]])
+            errors.extend([{**item, "file": name} for item in result["errors"]])
+        except Exception as exc:
+            errors.append({"file": name, "error": str(exc)})
+    return {"imported": imported, "errors": errors}
 
 
 def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
