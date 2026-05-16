@@ -22,6 +22,11 @@ const DEFAULT_SHORTCUTS = [
   { label: "Si", layer_name: "", material: "", thickness_nm: "", doping: "Si-doping" }
 ];
 
+const STACK_VIEW_HEIGHT = 470;
+const STACK_MIN_LAYER_HEIGHT = 28;
+const STACK_MIN_REPEAT_HEIGHT = 32;
+const STACK_MIN_QD_HEIGHT = 22;
+
 const els = {};
 
 document.addEventListener("DOMContentLoaded", init);
@@ -832,18 +837,20 @@ function renderStack(map) {
     els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
     return;
   }
-  els.stackVisual.innerHTML = renderStackItems(roots, map, 0);
+  els.stackVisual.innerHTML = renderStackItems(roots, map, 0, STACK_VIEW_HEIGHT);
 }
 
-function renderStackItems(items, map, depth) {
+function renderStackItems(items, map, depth, availableHeight = STACK_VIEW_HEIGHT) {
   const parts = [];
   let pendingQd = [];
+  const visibleItems = items.filter((item) => !(!isRepeatItem(item, map) && isQuantumDot(item)));
+  const totalThickness = visibleItems.reduce((sum, item) => sum + computeItem(item, map).thickness, 0);
   items.forEach((item, index) => {
     if (!isRepeatItem(item, map) && isQuantumDot(item)) {
       pendingQd.push(item);
       return;
     }
-    parts.push(renderStackSegment(item, map, depth, pendingQd, index));
+    parts.push(renderStackSegment(item, map, depth, pendingQd, index, totalThickness, availableHeight));
     pendingQd = [];
   });
   pendingQd.forEach((item) => {
@@ -852,25 +859,27 @@ function renderStackItems(items, map, depth) {
   return parts.join("");
 }
 
-function renderStackSegment(item, map, depth, qdMarkers, index) {
+function renderStackSegment(item, map, depth, qdMarkers, index, totalThickness, availableHeight) {
   const computed = computeItem(item, map);
   const repeat = isRepeatItem(item, map);
   const children = map.get(item.id) || [];
   const hasChildren = repeat && children.length > 0;
   const qdCap = qdMarkers.length > 0;
   const color = materialColor(item.material || item.layer_name || String(index));
-  const flex = visualFlex(computed.thickness);
-  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1) : "";
+  const height = visualSegmentHeight(computed.thickness, totalThickness, availableHeight, repeat, false);
+  const childHeight = Math.max(STACK_MIN_LAYER_HEIGHT, height - 34);
+  const childHtml = hasChildren ? renderStackItems(children, map, depth + 1, childHeight) : "";
   const classes = [
     "stack-segment",
     repeat ? "repeat" : "",
     hasChildren ? "with-children" : "",
     hasDoping(item) ? "doped" : "",
     qdCap ? "qd-cap" : "",
+    height < 40 ? "compact" : "",
     computed.thickness > 0 && computed.thickness < 30 ? "thin-layer" : ""
   ].filter(Boolean).join(" ");
   return `
-    <div class="${classes}" style="flex-grow:${flex}; background-color:${color}; --stack-depth:${depth}">
+    <div class="${classes}" style="height:${height}px; min-height:${height}px; background-color:${color}; --stack-depth:${depth}">
       <div class="segment-header">
         <div class="segment-name">${escapeHtml(item.layer_name || item.material || "未命名层")}</div>
         <div class="segment-meta">${escapeHtml(stackMeta(item, computed, map, qdMarkers))}</div>
@@ -889,7 +898,7 @@ function renderQdDots(items) {
 function renderQdMarker(item, depth) {
   const color = materialColor(item.material || item.layer_name || "QD");
   return `
-    <div class="stack-segment qd-marker" style="flex-grow:0.2; background-color:${color}; --stack-depth:${depth}">
+    <div class="stack-segment qd-marker compact" style="height:${STACK_MIN_QD_HEIGHT}px; min-height:${STACK_MIN_QD_HEIGHT}px; background-color:${color}; --stack-depth:${depth}">
       <div class="qd-dots"></div>
       <div class="segment-header">
         <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
@@ -1005,10 +1014,11 @@ function qdGrowthText(item) {
   return value;
 }
 
-function visualFlex(thickness) {
+function visualSegmentHeight(thickness, totalThickness, availableHeight, repeat = false, isQdMarker = false) {
   const value = numberValue(thickness);
-  if (value <= 0) return 0.2;
-  return Math.max(value, 30);
+  const minHeight = isQdMarker ? STACK_MIN_QD_HEIGHT : repeat ? STACK_MIN_REPEAT_HEIGHT : STACK_MIN_LAYER_HEIGHT;
+  if (value <= 0 || totalThickness <= 0) return minHeight;
+  return Math.max(minHeight, (value / totalThickness) * availableHeight);
 }
 
 function sumThickness(items, map) {

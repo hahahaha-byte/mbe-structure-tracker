@@ -574,23 +574,41 @@ input:focus {
 
 .stack-visual {
   height: 470px;
-  display: flex;
-  flex-direction: column;
   border: 1px solid var(--line);
   border-radius: 8px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
   background: #f9faf8;
 }
 
+.stack-visual::-webkit-scrollbar {
+  width: 10px;
+}
+
+.stack-visual::-webkit-scrollbar-track {
+  background: rgba(217, 222, 214, 0.5);
+}
+
+.stack-visual::-webkit-scrollbar-thumb {
+  background: rgba(104, 114, 107, 0.45);
+  border: 2px solid #f9faf8;
+  border-radius: 999px;
+}
+
+.stack-visual::-webkit-scrollbar-thumb:hover {
+  background: rgba(11, 118, 110, 0.55);
+}
+
 .stack-empty {
-  margin: auto;
+  height: 100%;
+  display: grid;
+  place-items: center;
   color: var(--muted);
 }
 
 .stack-segment {
   position: relative;
-  min-height: 22px;
-  flex-basis: 0;
   border-bottom: 1px solid rgba(24, 32, 29, 0.16);
   padding: 0;
   display: flex;
@@ -601,10 +619,12 @@ input:focus {
 }
 
 .stack-segment.thin-layer {
-  min-height: 28px;
+  outline: 1px solid rgba(24, 32, 29, 0.08);
+  outline-offset: -1px;
 }
 
 .segment-header {
+  flex: 0 0 auto;
   position: relative;
   z-index: 2;
   padding: 4px 8px;
@@ -621,11 +641,6 @@ input:focus {
   );
 }
 
-.stack-segment.with-children {
-  min-height: 76px;
-  justify-content: stretch;
-}
-
 .repeat-children {
   flex: 1;
   min-height: 0;
@@ -635,6 +650,7 @@ input:focus {
   margin: 0 5px 5px 8px;
   padding: 4px 0 0 7px;
   border-left: 2px solid rgba(92, 109, 57, 0.3);
+  overflow: hidden;
 }
 
 .repeat-children .stack-segment {
@@ -661,7 +677,6 @@ input:focus {
 }
 
 .stack-segment.qd-marker {
-  min-height: 22px;
   border-left: 5px solid var(--qd);
   background-image: linear-gradient(90deg, rgba(191, 77, 111, 0.18), transparent);
 }
@@ -699,6 +714,19 @@ input:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   padding-right: 24px;
+}
+
+.stack-segment.compact {
+  justify-content: center;
+}
+
+.stack-segment.compact .segment-header {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.stack-segment.compact .segment-meta {
+  display: none;
 }
 
 .stats-content {
