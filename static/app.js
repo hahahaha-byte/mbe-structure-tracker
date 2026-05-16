@@ -9,8 +9,7 @@ const state = {
   shortcuts: [],
   saveTimers: new Map(),
   waferSaveTimer: null,
-  rowAnimationItemId: null,
-  rowAnimationKind: "",
+  rowAnimations: new Map(),
   rowAnimationTimer: null
 };
 
@@ -247,29 +246,41 @@ function lockedCell(message, text) {
 }
 
 function queueRowAnimation(itemId, kind = "insert") {
-  state.rowAnimationItemId = itemId;
-  state.rowAnimationKind = kind;
+  if (!itemId) return;
+  state.rowAnimations.set(Number(itemId), kind);
+}
+
+function queueMoveAnimation(itemId, direction) {
+  const partner = swapPartnerItem(itemId, direction);
+  if (!partner) return;
+  if (direction === "up") {
+    queueRowAnimation(itemId, "swap-from-below");
+    queueRowAnimation(partner.id, "swap-from-above");
+  } else {
+    queueRowAnimation(itemId, "swap-from-above");
+    queueRowAnimation(partner.id, "swap-from-below");
+  }
 }
 
 function rowAnimationClass(item) {
-  if (item.id !== state.rowAnimationItemId) return "";
-  const kind = state.rowAnimationKind || "insert";
+  const kind = state.rowAnimations.get(item.id);
+  if (!kind) return "";
   return `row-animate row-animate-${kind}`;
 }
 
 function scheduleRowAnimationClear() {
-  if (!state.rowAnimationItemId) return;
-  const itemId = state.rowAnimationItemId;
+  if (!state.rowAnimations.size) return;
   clearTimeout(state.rowAnimationTimer);
   state.rowAnimationTimer = setTimeout(() => {
-    if (state.rowAnimationItemId === itemId) {
-      state.rowAnimationItemId = null;
-      state.rowAnimationKind = "";
-    }
+    state.rowAnimations.clear();
     els.layerTableBody
       .querySelectorAll(".row-animate")
-      .forEach((row) => row.classList.remove("row-animate", "row-animate-insert", "row-animate-move-up", "row-animate-move-down"));
-  }, 560);
+      .forEach((row) => {
+        Array.from(row.classList)
+          .filter((className) => className.startsWith("row-animate"))
+          .forEach((className) => row.classList.remove(className));
+      });
+  }, 920);
 }
 
 function handleWaferListClick(event) {
@@ -328,13 +339,14 @@ async function handleTableClick(event) {
     }
     if (action === "move-up" || action === "move-down") {
       const direction = action === "move-up" ? "up" : "down";
+      const partner = swapPartnerItem(id, direction);
       await api(`/api/items/${id}/move`, {
         method: "POST",
         body: JSON.stringify({ direction })
       });
       state.selectedItemId = id;
       state.insertTargetItemId = id;
-      queueRowAnimation(id, `move-${direction}`);
+      if (partner) queueMoveAnimation(id, direction);
       await loadWafer(state.current.id);
     }
     if (action === "delete-item") {
@@ -686,6 +698,16 @@ function insertionTargetItem() {
     if (item) return item;
   }
   return null;
+}
+
+function swapPartnerItem(itemId, direction) {
+  if (!state.current) return null;
+  const item = state.current.items.find((candidate) => candidate.id === itemId);
+  if (!item) return null;
+  const siblings = childMap().get(item.parent_id || null) || [];
+  const index = siblings.findIndex((candidate) => candidate.id === itemId);
+  const partnerIndex = direction === "up" ? index - 1 : index + 1;
+  return siblings[partnerIndex] || null;
 }
 
 function insertionReference(target, fallbackParentId = null) {
