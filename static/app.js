@@ -1944,19 +1944,54 @@ function handleShortcutInput(event) {
   saveShortcuts();
 }
 
-function handleShortcutClick(event) {
+async function handleShortcutClick(event) {
   const button = event.target.closest("[data-shortcut-action]");
   if (!button) return;
   const index = Number(button.dataset.shortcutIndex);
   const action = button.dataset.shortcutAction;
-  if (action === "insert") {
-    insertShortcutLayer(state.shortcuts[index]).catch(showError);
+  const shortcut = state.shortcuts[index];
+  if (!shortcut) return;
+  try {
+    if (action === "insert") {
+      await insertShortcutLayer(shortcut);
+    }
+    if (action === "remove") {
+      const confirmed = await confirmShortcutRemoval(shortcut);
+      if (!confirmed) return;
+      state.shortcuts.splice(index, 1);
+      saveShortcuts();
+      renderShortcuts();
+      showStatus("快捷项已删除");
+    }
+  } catch (error) {
+    showError(error);
   }
-  if (action === "remove") {
-    state.shortcuts.splice(index, 1);
-    saveShortcuts();
-    renderShortcuts();
-  }
+}
+
+function confirmShortcutRemoval(shortcut) {
+  return new Promise((resolve) => {
+    const title = shortcutTitle(shortcut);
+    const childCount = shortcutChildCount(shortcut);
+    const modal = showModal(`
+      <div class="modal-backdrop">
+        <div class="modal-panel">
+          <div class="modal-title">
+            <h2>删除快捷项</h2>
+            <button data-modal-close title="关闭">×</button>
+          </div>
+          <p class="modal-copy">确认删除 <strong>${escapeHtml(title)}</strong>${childCount ? `，包含 ${childCount} 个子层` : ""}？</p>
+          <div class="modal-actions">
+            <button data-modal-close>取消</button>
+            <button class="danger-btn" id="confirmShortcutDeleteBtn">确认删除</button>
+          </div>
+        </div>
+      </div>
+    `, () => resolve(false));
+    modal.querySelector("#confirmShortcutDeleteBtn").addEventListener("click", () => {
+      closeModal(modal);
+      resolve(true);
+    });
+  });
 }
 
 function addShortcut() {
