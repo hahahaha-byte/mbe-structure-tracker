@@ -804,7 +804,7 @@ select:focus {
 
 .stack-segment.qd-cap > .segment-body,
 .stack-segment.qd-marker > .segment-body {
-  grid-template-columns: minmax(0, 1fr) 96px;
+  grid-template-columns: minmax(0, 1fr) 112px;
   gap: 6px;
 }
 
@@ -862,6 +862,36 @@ select:focus {
   pointer-events: none;
 }
 
+.qd-dots.qd-doped {
+  height: 18px;
+  min-height: 18px;
+  border-color: rgba(191, 77, 111, 0.5);
+  background-color: rgba(255, 240, 247, 0.92);
+  background-position: 50px 50%;
+  background-size: 13px 11px;
+}
+
+.qd-doping-tag {
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: inline-grid;
+  place-items: center;
+  min-width: 42px;
+  height: 12px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #8f2f51;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.58);
+}
+
 .repeat-children .stack-segment.qd-cap .qd-dots,
 .repeat-children .stack-segment.qd-marker .qd-dots {
   height: 13px;
@@ -871,9 +901,16 @@ select:focus {
   background-size: 12px 11px;
 }
 
+.repeat-children .stack-segment.qd-cap .qd-dots.qd-doped,
+.repeat-children .stack-segment.qd-marker .qd-dots.qd-doped {
+  height: 18px;
+  min-height: 18px;
+  background-position: 48px 50%;
+}
+
 .repeat-children .stack-segment.qd-cap > .segment-body,
 .repeat-children .stack-segment.qd-marker > .segment-body {
-  grid-template-columns: minmax(0, 1fr) 84px;
+  grid-template-columns: minmax(0, 1fr) 102px;
   gap: 5px;
 }
 

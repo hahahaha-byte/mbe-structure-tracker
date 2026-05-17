@@ -1362,7 +1362,7 @@ function drawCanvasSegment(ctx, part, map, x, y, width, height) {
   ctx.strokeStyle = "rgba(24,32,29,0.16)";
   ctx.strokeRect(x, y, width, height);
   const doped = hasDoping(item);
-  const qdLane = part.qdMarkers.length ? qdLaneRect(x, y, width, height, doped) : null;
+  const qdLane = part.qdMarkers.length ? qdLaneRect(x, y, width, height, doped, part.qdMarkers) : null;
   const reserveRight = qdLane ? width - (qdLane.x - x) + 8 : doped ? 48 : 24;
   drawSegmentText(ctx, item.layer_name || item.material || "未命名层", stackMeta(item, part.computed, map, part.qdMarkers), x, y, width, height, reserveRight);
   if (qdLane) drawQdLaneCanvas(ctx, qdLane.x, qdLane.y, qdLane.width, qdLane.height, part.qdMarkers);
@@ -1387,7 +1387,7 @@ function drawQdMarkerSegment(ctx, item, x, y, width, height) {
   ctx.fillRect(x, y, width, height);
   ctx.strokeStyle = "rgba(191,77,111,0.35)";
   ctx.strokeRect(x, y, width, height);
-  const qdLane = qdLaneRect(x, y, width, height, false);
+  const qdLane = qdLaneRect(x, y, width, height, false, [item]);
   drawSegmentText(ctx, item.layer_name || item.material || "QD", stackMeta(item, { thickness: 0 }, new Map()), x, y, width, height, width - (qdLane.x - x) + 8);
   drawQdLaneCanvas(ctx, qdLane.x, qdLane.y, qdLane.width, qdLane.height, [item]);
 }
@@ -1409,10 +1409,11 @@ function drawSegmentText(ctx, name, meta, x, y, width, height, reserveRight = 48
   ctx.restore();
 }
 
-function qdLaneRect(x, y, width, height, doped = false) {
-  const laneWidth = Math.min(150, Math.max(72, width * 0.24));
+function qdLaneRect(x, y, width, height, doped = false, qdItems = []) {
+  const hasQdDoping = qdItems.some(hasDoping);
+  const laneWidth = hasQdDoping ? Math.min(260, Math.max(126, width * 0.38)) : Math.min(150, Math.max(72, width * 0.24));
   const rightReserve = doped ? 42 : 10;
-  const laneHeight = 13;
+  const laneHeight = hasQdDoping ? 18 : 13;
   const bottomGap = Math.max(4, Math.min(7, height * 0.12));
   return {
     x: x + width - laneWidth - rightReserve,
@@ -1423,24 +1424,54 @@ function qdLaneRect(x, y, width, height, doped = false) {
 }
 
 function drawQdLaneCanvas(ctx, x, y, width, height, items) {
+  const tag = qdDopingTag(items, true);
   ctx.save();
   roundedRect(ctx, x, y, width, height, Math.min(12, height / 2));
-  ctx.fillStyle = "rgba(255,247,250,0.78)";
+  ctx.fillStyle = tag ? "rgba(255,240,247,0.92)" : "rgba(255,247,250,0.78)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(191,77,111,0.16)";
+  ctx.strokeStyle = tag ? "rgba(191,77,111,0.5)" : "rgba(191,77,111,0.16)";
   ctx.stroke();
-  drawQdDotsCanvas(ctx, x + 6, y + height / 2 - 5, width - 12, items);
+  roundedRect(ctx, x, y, width, height, Math.min(12, height / 2));
+  ctx.clip();
+  let dotsX = x + 6;
+  let dotsWidth = width - 12;
+  if (tag) {
+    ctx.font = "700 10px sans-serif";
+    const tagWidth = Math.min(width - 36, Math.max(44, ctx.measureText(tag).width + 16));
+    const fittedTag = fitCanvasText(ctx, tag, tagWidth - 10);
+    roundedRect(ctx, x + 3, y + 3, tagWidth, height - 6, 7);
+    ctx.fillStyle = "#8f2f51";
+    ctx.fill();
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(fittedTag, x + 3 + tagWidth / 2, y + height / 2 + 0.5);
+    ctx.textAlign = "left";
+    ctx.textBaseline = "alphabetic";
+    dotsX = x + tagWidth + 10;
+    dotsWidth = Math.max(24, width - tagWidth - 14);
+  }
+  drawQdDotsCanvas(ctx, dotsX, y + height / 2 - 5, dotsWidth, items);
   ctx.restore();
 }
 
 function drawQdDotsCanvas(ctx, x, y, width, items) {
   ctx.fillStyle = "rgba(191,77,111,0.92)";
-  const count = Math.max(8, Math.min(42, Math.floor(width / 16)));
+  const count = Math.max(3, Math.min(42, Math.floor(width / 16)));
   for (let index = 0; index < count; index += 1) {
     ctx.beginPath();
     ctx.arc(x + 8 + index * 15, y + 5, 2.5, 0, Math.PI * 2);
     ctx.fill();
   }
+}
+
+function fitCanvasText(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let fitted = text;
+  while (fitted.length > 1 && ctx.measureText(`${fitted}...`).width > maxWidth) {
+    fitted = fitted.slice(0, -1);
+  }
+  return `${fitted}...`;
 }
 
 function drawRepeatPattern(ctx, x, y, width, height) {
@@ -1763,8 +1794,13 @@ function renderStackSegment(part, map, depth) {
 }
 
 function renderQdDots(items) {
-  const label = items.map((item) => qdGrowthText(item)).filter(Boolean).join(" + ");
-  return `<div class="qd-dots" title="${escapeAttr(label ? `QD ${label}` : "QD")}"></div>`;
+  const label = items.map(qdVisualText).filter(Boolean).join(" + ");
+  const dopingTag = qdDopingTag(items);
+  return `
+    <div class="qd-dots ${dopingTag ? "qd-doped" : ""}" title="${escapeAttr(label ? `QD ${label}` : "QD")}">
+      ${dopingTag ? `<span class="qd-doping-tag">${escapeHtml(dopingTag)}</span>` : ""}
+    </div>
+  `;
 }
 
 function renderQdMarker(item, depth, height = STACK_MIN_QD_HEIGHT) {
@@ -1776,10 +1812,21 @@ function renderQdMarker(item, depth, height = STACK_MIN_QD_HEIGHT) {
           <div class="segment-name">${escapeHtml(item.layer_name || item.material || "QD")}</div>
           <div class="segment-meta">${escapeHtml(stackMeta(item, { thickness: 0 }, new Map()))}</div>
         </div>
-        <div class="qd-dots"></div>
+        ${renderQdDots([item])}
       </div>
     </div>
   `;
+}
+
+function qdDopingTag(items, includeText = false) {
+  const dopedItems = (items || []).filter(hasDoping);
+  if (!dopedItems.length) return "";
+  const types = [...new Set(dopedItems.map((item) => normalizeDopingType(item.doping_type)).filter(Boolean))];
+  const typeLabel = types.length === 1 ? types[0] : types.length > 1 ? types.join("/") : "D";
+  const compact = `QD-${typeLabel}`;
+  if (!includeText || dopedItems.length !== 1) return compact;
+  const text = String(dopedItems[0].doping || "").trim();
+  return text ? `${compact} ${text}` : compact;
 }
 
 function stackMeta(item, computed, map, qdMarkers = []) {
