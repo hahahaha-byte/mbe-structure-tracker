@@ -225,7 +225,12 @@ def list_wafers(conn: sqlite3.Connection, search: str = "") -> List[Dict[str, An
         LEFT JOIN structure_item i ON i.wafer_id = w.id
         {where}
         GROUP BY w.id
-        ORDER BY w.updated_at DESC, w.wafer_code COLLATE NOCASE
+        ORDER BY
+            CASE WHEN UPPER(w.wafer_code) GLOB 'N[0-9][0-9][0-9][0-9][0-9][0-9]*' THEN 0 ELSE 1 END,
+            CASE WHEN UPPER(w.wafer_code) GLOB 'N[0-9][0-9][0-9][0-9][0-9][0-9]*' THEN SUBSTR(w.wafer_code, 2, 6) ELSE '' END DESC,
+            CASE WHEN UPPER(w.wafer_code) GLOB 'N[0-9][0-9][0-9][0-9][0-9][0-9]*' THEN UPPER(SUBSTR(w.wafer_code, 8)) ELSE '' END DESC,
+            w.updated_at DESC,
+            w.wafer_code COLLATE NOCASE DESC
         """,
         params,
     ).fetchall()
