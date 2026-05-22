@@ -147,6 +147,25 @@ select:focus {
   color: #fff;
 }
 
+.wafer-type-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.wafer-type-tabs button {
+  min-height: 34px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.wafer-type-tabs button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .sidebar-actions {
   display: grid;
   gap: 8px;
@@ -175,6 +194,10 @@ select:focus {
 .wafer-item.active {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+.wafer-item.test-wafer {
+  border-left: 4px solid #8f2f51;
 }
 
 .wafer-select {
@@ -264,6 +287,10 @@ select:focus {
 
 .wafer-header .notes {
   grid-column: 1 / -1;
+}
+
+.test-wafer-fields {
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
 }
 
 .toolbar {

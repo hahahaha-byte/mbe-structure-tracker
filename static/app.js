@@ -12,7 +12,8 @@ const state = {
   waferSaveTimer: null,
   rowAnimations: new Map(),
   rowAnimationTimer: null,
-  pendingExpandToggles: new Set()
+  pendingExpandToggles: new Set(),
+  waferType: "formal"
 };
 
 const DEFAULT_SHORTCUTS = [
@@ -33,6 +34,17 @@ const STACK_REPEAT_HEADER_HEIGHT = 50;
 const STACK_REPEAT_CHILD_PADDING_TOP = 6;
 const STACK_REPEAT_CHILD_PADDING_BOTTOM = 7;
 const STACK_REPEAT_CHILD_GAP = 4;
+const TEST_WAFER_FIELDS = [
+  "as_beam_ratio",
+  "qd_islanding_time",
+  "qd_deposition",
+  "reconstruction_temp",
+  "qd_growth_temp",
+  "growth_rate",
+  "qd_density",
+  "qd_volume",
+  "qd_volume_cv"
+];
 
 const els = {};
 
@@ -42,6 +54,7 @@ async function init() {
   bindElements();
   loadShortcuts();
   bindEvents();
+  renderWaferTypeTabs();
   renderShortcuts();
   updateUndoButton();
   await loadWafers();
@@ -49,7 +62,9 @@ async function init() {
 
 function bindElements() {
   els.searchInput = document.getElementById("searchInput");
+  els.waferTypeTabs = document.getElementById("waferTypeTabs");
   els.waferList = document.getElementById("waferList");
+  els.testWaferFields = document.getElementById("testWaferFields");
   els.layerTableBody = document.getElementById("layerTableBody");
   els.stackVisual = document.getElementById("stackVisual");
   els.statsContent = document.getElementById("statsContent");
@@ -64,12 +79,22 @@ function bindElements() {
     size: document.getElementById("waferSize"),
     structure_name: document.getElementById("structureName"),
     growth_date: document.getElementById("growthDate"),
-    notes: document.getElementById("waferNotes")
+    notes: document.getElementById("waferNotes"),
+    as_beam_ratio: document.getElementById("asBeamRatio"),
+    qd_islanding_time: document.getElementById("qdIslandingTime"),
+    qd_deposition: document.getElementById("qdDeposition"),
+    reconstruction_temp: document.getElementById("reconstructionTemp"),
+    qd_growth_temp: document.getElementById("qdGrowthTemp"),
+    growth_rate: document.getElementById("growthRate"),
+    qd_density: document.getElementById("qdDensity"),
+    qd_volume: document.getElementById("qdVolume"),
+    qd_volume_cv: document.getElementById("qdVolumeCv")
   };
 }
 
 function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
+  els.waferTypeTabs.addEventListener("click", handleWaferTypeClick);
   document.getElementById("importJsonBtn").addEventListener("click", () => els.jsonImportInput.click());
   els.deleteSelectedWafersBtn.addEventListener("click", () => deleteSelectedWafers().catch(showError));
   els.jsonImportInput.addEventListener("change", importJsonFiles);
@@ -122,11 +147,12 @@ async function api(path, options = {}) {
 
 async function loadWafers(selectId = null) {
   const search = encodeURIComponent(els.searchInput.value.trim());
-  const payload = await api(`/api/wafers?search=${search}`);
+  const payload = await api(`/api/wafers?search=${search}&type=${encodeURIComponent(state.waferType)}`);
   state.wafers = payload.wafers;
   pruneWaferSelection();
   renderWaferList();
-  const idToLoad = selectId || state.current?.id || state.wafers[0]?.id;
+  const preferredId = selectId || state.current?.id || null;
+  const idToLoad = state.wafers.some((wafer) => wafer.id === preferredId) ? preferredId : state.wafers[0]?.id;
   if (idToLoad) {
     await loadWafer(idToLoad);
   } else {
@@ -135,6 +161,27 @@ async function loadWafers(selectId = null) {
     state.insertTargetItemId = null;
     renderCurrent();
   }
+}
+
+function handleWaferTypeClick(event) {
+  const button = event.target.closest("[data-wafer-type]");
+  if (!button) return;
+  const nextType = normalizeWaferType(button.dataset.waferType);
+  if (nextType === state.waferType) return;
+  state.waferType = nextType;
+  state.current = null;
+  state.selectedItemId = null;
+  state.insertTargetItemId = null;
+  state.waferSelection.clear();
+  renderWaferTypeTabs();
+  loadWafers().catch(showError);
+}
+
+function renderWaferTypeTabs() {
+  els.waferTypeTabs.querySelectorAll("[data-wafer-type]").forEach((button) => {
+    button.classList.toggle("active", normalizeWaferType(button.dataset.waferType) === state.waferType);
+  });
+  els.searchInput.placeholder = state.waferType === "test" ? "搜索测试片 / 参数" : "搜索片号 / 结构";
 }
 
 async function loadWafer(id) {
@@ -159,14 +206,14 @@ function renderWaferList() {
       const active = wafer.id === state.current?.id ? "active" : "";
       const checked = state.waferSelection.has(wafer.id) ? "checked" : "";
       return `
-        <div class="wafer-item ${active}">
+        <div class="wafer-item ${active} ${normalizeWaferType(wafer.wafer_type) === "test" ? "test-wafer" : ""}">
           <label class="wafer-select" title="选择批量删除">
             <input type="checkbox" data-wafer-select="${wafer.id}" ${checked} />
           </label>
           <button class="wafer-main" data-wafer-id="${wafer.id}">
             <span class="wafer-code">${escapeHtml(wafer.wafer_code)}</span>
-            <span class="wafer-meta">${escapeHtml(wafer.structure_name || "未命名结构")}</span>
-            <span class="wafer-meta">${escapeHtml(wafer.size || "")} · ${wafer.item_count || 0} 层 · ${wafer.doped_item_count || 0} 掺杂</span>
+            <span class="wafer-meta">${escapeHtml(wafer.structure_name || (normalizeWaferType(wafer.wafer_type) === "test" ? "测试片记录" : "未命名结构"))}</span>
+            <span class="wafer-meta">${escapeHtml(waferCardMeta(wafer))}</span>
           </button>
           <button class="wafer-delete" data-wafer-delete="${wafer.id}" title="删除整片">×</button>
         </div>
@@ -176,8 +223,26 @@ function renderWaferList() {
   updateWaferDeleteButton();
 }
 
+function waferCardMeta(wafer) {
+  if (normalizeWaferType(wafer.wafer_type) !== "test") {
+    return `${wafer.size || ""} · ${wafer.item_count || 0} 层 · ${wafer.doped_item_count || 0} 掺杂`;
+  }
+  const fields = [
+    ["As比", wafer.as_beam_ratio],
+    ["成岛", wafer.qd_islanding_time],
+    ["淀积", wafer.qd_deposition],
+    ["密度", wafer.qd_density],
+    ["速率", wafer.growth_rate]
+  ]
+    .filter(([, value]) => String(value || "").trim())
+    .map(([label, value]) => `${label} ${value}`);
+  return fields.length ? fields.slice(0, 3).join(" · ") : `${wafer.size || ""} · 测试片`;
+}
+
 function renderCurrent() {
   const wafer = state.current;
+  const testWafer = normalizeWaferType(wafer?.wafer_type) === "test";
+  els.testWaferFields.hidden = !testWafer;
   Object.entries(els.waferFields).forEach(([field, input]) => {
     input.value = wafer?.[field] || "";
     input.disabled = !wafer;
@@ -589,7 +654,12 @@ async function createNewWafer() {
     if (!wafer_code) return;
     const payload = await api("/api/wafers", {
       method: "POST",
-      body: JSON.stringify({ wafer_code, size: "3英寸", structure_name: "" })
+      body: JSON.stringify({
+        wafer_code,
+        wafer_type: state.waferType,
+        size: "3英寸",
+        structure_name: state.waferType === "test" ? "测试片" : ""
+      })
     });
     state.selectedItemId = null;
     state.insertTargetItemId = null;
@@ -1048,8 +1118,18 @@ function askImportConflictDecision(waferCode) {
 function csvForWafers(wafers) {
   const rows = [[
     "wafer_code",
+    "wafer_type",
     "size",
     "structure_name",
+    "as_beam_ratio",
+    "qd_islanding_time",
+    "qd_deposition",
+    "reconstruction_temp",
+    "qd_growth_temp",
+    "growth_rate",
+    "qd_density",
+    "qd_volume",
+    "qd_volume_cv",
     "path",
     "type",
     "layer_name",
@@ -1065,7 +1145,11 @@ function csvForWafers(wafers) {
   ]];
   wafers.forEach((wafer) => {
     const map = childMapForItems(wafer.items || []);
-    writeCsvItemRows(rows, wafer, map, null, "");
+    if ((map.get(null) || []).length) {
+      writeCsvItemRows(rows, wafer, map, null, "");
+    } else {
+      rows.push([...waferCsvPrefix(wafer), "", "wafer", "", "", "", "", "", "", "", "", "", ""]);
+    }
   });
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`;
 }
@@ -1074,9 +1158,7 @@ function writeCsvItemRows(rows, wafer, map, parentId, prefix) {
   (map.get(parentId) || []).forEach((item, index) => {
     const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
     rows.push([
-      wafer.wafer_code,
-      wafer.size,
-      wafer.structure_name,
+      ...waferCsvPrefix(wafer),
       path,
       item.item_type,
       item.layer_name,
@@ -1092,6 +1174,24 @@ function writeCsvItemRows(rows, wafer, map, parentId, prefix) {
     ]);
     writeCsvItemRows(rows, wafer, map, item.id, path);
   });
+}
+
+function waferCsvPrefix(wafer) {
+  return [
+    wafer.wafer_code,
+    normalizeWaferType(wafer.wafer_type),
+    wafer.size,
+    wafer.structure_name,
+    wafer.as_beam_ratio,
+    wafer.qd_islanding_time,
+    wafer.qd_deposition,
+    wafer.reconstruction_temp,
+    wafer.qd_growth_temp,
+    wafer.growth_rate,
+    wafer.qd_density,
+    wafer.qd_volume,
+    wafer.qd_volume_cv
+  ];
 }
 
 function csvCell(value) {
@@ -2070,6 +2170,10 @@ function normalizeDopingType(value) {
   return text === "N" || text === "P" ? text : "";
 }
 
+function normalizeWaferType(value) {
+  return String(value || "").trim().toLowerCase() === "test" ? "test" : "formal";
+}
+
 function loadShortcuts() {
   try {
     state.shortcuts = JSON.parse(localStorage.getItem("mbe-shortcuts") || "null") || DEFAULT_SHORTCUTS;
@@ -2293,13 +2397,18 @@ function shortcutToTree(shortcut) {
 }
 
 function pickWaferFields(wafer) {
-  return {
+  const payload = {
     wafer_code: wafer.wafer_code,
     size: wafer.size,
     structure_name: wafer.structure_name,
     growth_date: wafer.growth_date,
-    notes: wafer.notes
+    notes: wafer.notes,
+    wafer_type: normalizeWaferType(wafer.wafer_type)
   };
+  TEST_WAFER_FIELDS.forEach((field) => {
+    payload[field] = wafer[field] || "";
+  });
+  return payload;
 }
 
 async function nextWaferCode() {

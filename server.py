@@ -149,7 +149,8 @@ class MBEHandler(BaseHTTPRequestHandler):
                 return
             if method == "GET" and parts == ["api", "wafers"]:
                 search = query.get("search", [""])[0]
-                json_response(self, HTTPStatus.OK, {"wafers": list_wafers(conn, search)})
+                wafer_type = query.get("type", [""])[0]
+                json_response(self, HTTPStatus.OK, {"wafers": list_wafers(conn, search, wafer_type)})
                 return
             if method == "POST" and parts == ["api", "wafers"]:
                 json_response(self, HTTPStatus.CREATED, {"wafer": create_wafer(conn, body)})
@@ -263,8 +264,18 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
     writer.writerow(
         [
             "wafer_code",
+            "wafer_type",
             "size",
             "structure_name",
+            "as_beam_ratio",
+            "qd_islanding_time",
+            "qd_deposition",
+            "reconstruction_temp",
+            "qd_growth_temp",
+            "growth_rate",
+            "qd_density",
+            "qd_volume",
+            "qd_volume_cv",
             "path",
             "type",
             "layer_name",
@@ -281,7 +292,10 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
     )
     for wafer in payload["wafers"]:
         children = build_children_map(wafer["items"])
-        write_csv_items(writer, wafer, children, None, "")
+        if children.get(None):
+            write_csv_items(writer, wafer, children, None, "")
+        else:
+            writer.writerow(wafer_csv_prefix(wafer) + ["", "wafer", "", "", "", "", "", "", "", "", "", ""])
     return output.getvalue()
 
 
@@ -304,10 +318,8 @@ def write_csv_items(
     for index, item in enumerate(children.get(parent_id, []), start=1):
         path = f"{prefix}.{index}" if prefix else str(index)
         writer.writerow(
-            [
-                wafer["wafer_code"],
-                wafer["size"],
-                wafer["structure_name"],
+            wafer_csv_prefix(wafer)
+            + [
                 path,
                 item["item_type"],
                 item["layer_name"],
@@ -323,6 +335,24 @@ def write_csv_items(
             ]
         )
         write_csv_items(writer, wafer, children, item["id"], path)
+
+
+def wafer_csv_prefix(wafer: Dict[str, Any]) -> list[Any]:
+    return [
+        wafer["wafer_code"],
+        wafer.get("wafer_type", "formal"),
+        wafer["size"],
+        wafer["structure_name"],
+        wafer.get("as_beam_ratio", ""),
+        wafer.get("qd_islanding_time", ""),
+        wafer.get("qd_deposition", ""),
+        wafer.get("reconstruction_temp", ""),
+        wafer.get("qd_growth_temp", ""),
+        wafer.get("growth_rate", ""),
+        wafer.get("qd_density", ""),
+        wafer.get("qd_volume", ""),
+        wafer.get("qd_volume_cv", ""),
+    ]
 
 
 def run_server(args: argparse.Namespace) -> None:
