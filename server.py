@@ -269,6 +269,9 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
             "wafer_type",
             "size",
             "structure_name",
+            "growth_date",
+            "sample_holder_code",
+            "notes",
             "as_beam_ratio",
             "qd_islanding_time_s",
             "qd_deposition_islanding_time_multiple",
@@ -283,8 +286,12 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
             "pl_peak_nm",
             "pl_fwhm_nm",
             "pl_intensity",
+            "standby_vacuum",
+            "as_pressure_fill_vacuum",
+            "as_bulk_temp",
             "path",
             "type",
+            "section",
             "layer_name",
             "material",
             "thickness_nm",
@@ -302,7 +309,7 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
         if children.get(None):
             write_csv_items(writer, wafer, children, None, "")
         else:
-            writer.writerow(wafer_csv_prefix(wafer) + ["", "wafer", "", "", "", "", "", "", "", "", "", ""])
+            writer.writerow(wafer_csv_prefix(wafer) + ["", "wafer", "", "", "", "", "", "", "", "", "", "", ""])
     return output.getvalue()
 
 
@@ -329,6 +336,7 @@ def write_csv_items(
             + [
                 path,
                 item["item_type"],
+                item.get("section", "source"),
                 item["layer_name"],
                 item["material"],
                 item["thickness_nm"] or "",
@@ -350,6 +358,9 @@ def wafer_csv_prefix(wafer: Dict[str, Any]) -> list[Any]:
         wafer.get("wafer_type", "formal"),
         wafer["size"],
         wafer["structure_name"],
+        wafer.get("growth_date", ""),
+        wafer.get("sample_holder_code", ""),
+        wafer.get("notes", ""),
         wafer.get("as_beam_ratio", ""),
         wafer.get("qd_islanding_time", ""),
         wafer.get("qd_deposition", ""),
@@ -368,6 +379,9 @@ def wafer_csv_prefix(wafer: Dict[str, Any]) -> list[Any]:
         wafer.get("pl_peak_nm", ""),
         wafer.get("pl_fwhm_nm", ""),
         wafer.get("pl_intensity", ""),
+        wafer.get("standby_vacuum", ""),
+        wafer.get("as_pressure_fill_vacuum", ""),
+        wafer.get("as_bulk_temp", ""),
     ]
 
 

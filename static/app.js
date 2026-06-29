@@ -13,6 +13,7 @@ const state = {
   rowAnimations: new Map(),
   rowAnimationTimer: null,
   pendingExpandToggles: new Set(),
+  activeItemSection: "source",
   waferType: "formal"
 };
 
@@ -50,6 +51,43 @@ const TEST_WAFER_FIELDS = [
   "pl_fwhm_nm",
   "pl_intensity"
 ];
+const MACHINE_WAFER_FIELDS = [
+  "standby_vacuum",
+  "as_pressure_fill_vacuum",
+  "as_bulk_temp"
+];
+const DEFAULT_SECTION = "source";
+const AS_PRESSURE_SECTION = "as_pressure";
+const STANDARD_TABLE_HEADERS = [
+  ["", "actions-col"],
+  ["状态"],
+  ["层名"],
+  ["材料"],
+  ["厚度 nm / QD ML"],
+  ["周期"],
+  ["单周期 nm"],
+  ["掺杂浓度"],
+  ["N/P"],
+  ["生长温度"],
+  ["QD"],
+  ["备注"]
+];
+const SOURCE_TABLE_HEADERS = [
+  ["", "actions-col"],
+  ["源炉"],
+  ["束流 Torr"],
+  ["温度"],
+  ["备注"]
+];
+const AS_PRESSURE_TABLE_HEADERS = [
+  ["", "actions-col"],
+  ["As 压名称"],
+  ["生长材料"],
+  ["束流 Torr"],
+  ["Value"],
+  ["生长速率 um/h"],
+  ["备注"]
+];
 
 const els = {};
 
@@ -66,17 +104,31 @@ async function init() {
 }
 
 function bindElements() {
+  els.appShell = document.querySelector(".app-shell");
   els.searchInput = document.getElementById("searchInput");
   els.waferTypeTabs = document.getElementById("waferTypeTabs");
   els.waferList = document.getElementById("waferList");
+  els.codeFieldLabel = document.getElementById("codeFieldLabel");
+  els.sampleHolderField = document.getElementById("sampleHolderField");
   els.testWaferFields = document.getElementById("testWaferFields");
+  els.machineFields = document.getElementById("machineFields");
   els.layerTableBody = document.getElementById("layerTableBody");
+  els.layerTableHead = document.getElementById("layerTableHead");
+  els.primaryTableTitle = document.getElementById("primaryTableTitle");
+  els.asPressureSection = document.getElementById("asPressureSection");
+  els.asPressureTableBody = document.getElementById("asPressureTableBody");
+  els.asPressureTableHead = document.getElementById("asPressureTableHead");
   els.stackVisual = document.getElementById("stackVisual");
+  els.inspector = document.querySelector(".inspector");
   els.statsContent = document.getElementById("statsContent");
   els.totalThickness = document.getElementById("totalThickness");
   els.statusText = document.getElementById("statusText");
+  els.shortcutsSection = document.querySelector(".shortcuts");
   els.shortcutList = document.getElementById("shortcutList");
   els.undoDeleteBtn = document.getElementById("undoDeleteBtn");
+  els.addLayerBtn = document.querySelector("[data-action='add-layer']");
+  els.addInnerLayerBtn = document.querySelector("[data-action='add-inner-layer']");
+  els.addAsPressureBtn = document.getElementById("addAsPressureBtn");
   els.deleteSelectedWafersBtn = document.getElementById("deleteSelectedWafersBtn");
   els.jsonImportInput = document.getElementById("jsonImportInput");
   els.waferFields = {
@@ -85,6 +137,7 @@ function bindElements() {
     structure_name: document.getElementById("structureName"),
     growth_date: document.getElementById("growthDate"),
     notes: document.getElementById("waferNotes"),
+    sample_holder_code: document.getElementById("sampleHolderCode"),
     as_beam_ratio: document.getElementById("asBeamRatio"),
     qd_islanding_time: document.getElementById("qdIslandingTime"),
     qd_deposition: document.getElementById("qdDeposition"),
@@ -98,7 +151,10 @@ function bindElements() {
     qd_height: document.getElementById("qdHeight"),
     pl_peak_nm: document.getElementById("plPeakNm"),
     pl_fwhm_nm: document.getElementById("plFwhmNm"),
-    pl_intensity: document.getElementById("plIntensity")
+    pl_intensity: document.getElementById("plIntensity"),
+    standby_vacuum: document.getElementById("standbyVacuum"),
+    as_pressure_fill_vacuum: document.getElementById("asPressureFillVacuum"),
+    as_bulk_temp: document.getElementById("asBulkTemp")
   };
 }
 
@@ -106,6 +162,7 @@ function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
   els.waferTypeTabs.addEventListener("click", handleWaferTypeClick);
   document.getElementById("importJsonBtn").addEventListener("click", () => els.jsonImportInput.click());
+  document.getElementById("backupExportBtn").addEventListener("click", exportGlobalBackup);
   els.deleteSelectedWafersBtn.addEventListener("click", () => deleteSelectedWafers().catch(showError));
   els.jsonImportInput.addEventListener("change", importJsonFiles);
   document.getElementById("addShortcutBtn").addEventListener("click", addShortcut);
@@ -118,6 +175,11 @@ function bindEvents() {
   els.layerTableBody.addEventListener("click", handleTableClick);
   els.layerTableBody.addEventListener("input", handleItemInput);
   els.layerTableBody.addEventListener("change", handleItemInput);
+  els.asPressureTableBody.addEventListener("pointerdown", rememberTableTarget);
+  els.asPressureTableBody.addEventListener("focusin", rememberTableTarget);
+  els.asPressureTableBody.addEventListener("click", handleTableClick);
+  els.asPressureTableBody.addEventListener("input", handleItemInput);
+  els.asPressureTableBody.addEventListener("change", handleItemInput);
   els.shortcutList.addEventListener("input", handleShortcutInput);
   els.shortcutList.addEventListener("change", handleShortcutInput);
   els.shortcutList.addEventListener("click", handleShortcutClick);
@@ -182,6 +244,7 @@ function handleWaferTypeClick(event) {
   state.current = null;
   state.selectedItemId = null;
   state.insertTargetItemId = null;
+  state.activeItemSection = DEFAULT_SECTION;
   state.waferSelection.clear();
   renderWaferTypeTabs();
   loadWafers().catch(showError);
@@ -191,7 +254,11 @@ function renderWaferTypeTabs() {
   els.waferTypeTabs.querySelectorAll("[data-wafer-type]").forEach((button) => {
     button.classList.toggle("active", normalizeWaferType(button.dataset.waferType) === state.waferType);
   });
-  els.searchInput.placeholder = state.waferType === "test" ? "搜索测试片 / 参数" : "搜索片号 / 结构";
+  if (state.waferType === "machine") {
+    els.searchInput.placeholder = "搜索日期 / MBE 参数";
+  } else {
+    els.searchInput.placeholder = state.waferType === "test" ? "搜索测试片 / 参数" : "搜索片号 / 结构";
+  }
 }
 
 async function loadWafer(id) {
@@ -201,6 +268,7 @@ async function loadWafer(id) {
     state.selectedItemId = state.current.items[0]?.id || null;
   }
   state.insertTargetItemId = state.selectedItemId;
+  state.activeItemSection = itemSection(state.current.items.find((item) => item.id === state.selectedItemId)) || DEFAULT_SECTION;
   renderCurrent();
   renderWaferList();
 }
@@ -216,13 +284,13 @@ function renderWaferList() {
       const active = wafer.id === state.current?.id ? "active" : "";
       const checked = state.waferSelection.has(wafer.id) ? "checked" : "";
       return `
-        <div class="wafer-item ${active} ${normalizeWaferType(wafer.wafer_type) === "test" ? "test-wafer" : ""}">
+        <div class="wafer-item ${active} ${normalizeWaferType(wafer.wafer_type) === "test" ? "test-wafer" : ""} ${normalizeWaferType(wafer.wafer_type) === "machine" ? "machine-wafer" : ""}">
           <label class="wafer-select" title="选择批量删除">
             <input type="checkbox" data-wafer-select="${wafer.id}" ${checked} />
           </label>
           <button class="wafer-main" data-wafer-id="${wafer.id}">
             <span class="wafer-code">${escapeHtml(wafer.wafer_code)}</span>
-            <span class="wafer-meta">${escapeHtml(wafer.structure_name || (normalizeWaferType(wafer.wafer_type) === "test" ? "测试片记录" : "未命名结构"))}</span>
+            <span class="wafer-meta">${escapeHtml(wafer.structure_name || defaultRecordName(wafer))}</span>
             <span class="wafer-meta">${escapeHtml(waferCardMeta(wafer))}</span>
           </button>
           <button class="wafer-delete" data-wafer-delete="${wafer.id}" title="删除整片">×</button>
@@ -234,7 +302,18 @@ function renderWaferList() {
 }
 
 function waferCardMeta(wafer) {
-  if (normalizeWaferType(wafer.wafer_type) !== "test") {
+  const type = normalizeWaferType(wafer.wafer_type);
+  if (type === "machine") {
+    const fields = [
+      ["待机", wafer.standby_vacuum],
+      ["As充盈", wafer.as_pressure_fill_vacuum],
+      ["As bulk", wafer.as_bulk_temp]
+    ]
+      .filter(([, value]) => String(value || "").trim())
+      .map(([label, value]) => `${label} ${value}`);
+    return fields.length ? fields.join(" · ") : "MBE 参数";
+  }
+  if (type !== "test") {
     return `${wafer.size || ""} · ${wafer.item_count || 0} 层 · ${wafer.doped_item_count || 0} 掺杂`;
   }
   const fields = [
@@ -249,9 +328,18 @@ function waferCardMeta(wafer) {
   return fields.length ? fields.slice(0, 3).join(" · ") : `${wafer.size || ""} · 测试片`;
 }
 
+function defaultRecordName(wafer) {
+  const type = normalizeWaferType(wafer.wafer_type);
+  if (type === "machine") return "MBE 参数记录";
+  if (type === "test") return "测试片记录";
+  return "未命名结构";
+}
+
 function renderCurrent() {
   const wafer = state.current;
-  const testWafer = normalizeWaferType(wafer?.wafer_type) === "test";
+  const waferType = normalizeWaferType(wafer?.wafer_type || state.waferType);
+  const testWafer = waferType === "test";
+  const machineRecord = waferType === "machine";
   if (wafer) {
     wafer.growth_rate = computedGrowthRate(wafer.qd_islanding_time);
     wafer.qd_growth_temp = computedQdGrowthTemp(
@@ -260,7 +348,23 @@ function renderCurrent() {
       wafer.qd_growth_temp
     );
   }
+  els.codeFieldLabel.textContent = machineRecord ? "日期编号" : "片号";
+  els.appShell.classList.toggle("machine-mode", machineRecord);
+  els.inspector.hidden = machineRecord;
+  ["size", "structure_name", "growth_date", "sample_holder_code"].forEach((field) => {
+    const label = els.waferFields[field]?.closest?.("label");
+    if (label) label.hidden = machineRecord;
+  });
+  els.sampleHolderField.hidden = machineRecord;
   els.testWaferFields.hidden = !testWafer;
+  els.machineFields.hidden = !machineRecord;
+  els.asPressureSection.hidden = !machineRecord;
+  els.shortcutsSection.hidden = machineRecord;
+  els.addLayerBtn.textContent = machineRecord ? "+ 源炉" : "+ 层";
+  els.addInnerLayerBtn.textContent = machineRecord ? "+ 子项" : "+ 子层";
+  els.addAsPressureBtn.hidden = !machineRecord;
+  els.primaryTableTitle.textContent = machineRecord ? "源炉束流 / 温度" : "层结构";
+  renderTableHeads(machineRecord);
   Object.entries(els.waferFields).forEach(([field, input]) => {
     input.value = wafer?.[field] || "";
     input.disabled = !wafer;
@@ -272,17 +376,26 @@ function renderCurrent() {
     }
   });
   renderItems();
-  renderInspector();
+  if (machineRecord) {
+    clearInspector();
+  } else {
+    renderInspector();
+  }
   updateUndoButton();
 }
 
 function renderItems() {
   if (!state.current) {
     els.layerTableBody.innerHTML = "";
+    els.asPressureTableBody.innerHTML = "";
+    return;
+  }
+  if (isMachineRecord()) {
+    renderMachineItems();
     return;
   }
   const map = childMap();
-  const rows = flattenItems(null, 0, map);
+  const rows = flattenItems(null, 0, map, DEFAULT_SECTION);
   if (!rows.length) {
     els.layerTableBody.innerHTML = `
       <tr>
@@ -292,7 +405,32 @@ function renderItems() {
     return;
   }
   els.layerTableBody.innerHTML = rows.map(({ item, depth }) => renderItemRow(item, depth, map)).join("");
+  els.asPressureTableBody.innerHTML = "";
   scheduleRowAnimationClear();
+}
+
+function renderMachineItems() {
+  const map = childMap();
+  const sourceRows = flattenItems(null, 0, map, DEFAULT_SECTION);
+  const asRows = flattenItems(null, 0, map, AS_PRESSURE_SECTION);
+  els.layerTableBody.innerHTML = sourceRows.length
+    ? sourceRows.map(({ item, depth }) => renderMachineItemRow(item, depth, map, DEFAULT_SECTION)).join("")
+    : `<tr><td colspan="5" class="wafer-meta">暂无源炉参数</td></tr>`;
+  els.asPressureTableBody.innerHTML = asRows.length
+    ? asRows.map(({ item, depth }) => renderMachineItemRow(item, depth, map, AS_PRESSURE_SECTION)).join("")
+    : `<tr><td colspan="7" class="wafer-meta">暂无 As 压参数</td></tr>`;
+  scheduleRowAnimationClear();
+}
+
+function renderTableHeads(machineRecord) {
+  renderTableHead(els.layerTableHead, machineRecord ? SOURCE_TABLE_HEADERS : STANDARD_TABLE_HEADERS);
+  renderTableHead(els.asPressureTableHead, AS_PRESSURE_TABLE_HEADERS);
+}
+
+function renderTableHead(target, headers) {
+  target.innerHTML = headers
+    .map(([label, className]) => `<th class="${className || ""}">${escapeHtml(label)}</th>`)
+    .join("");
 }
 
 function renderItemRow(item, depth, map) {
@@ -331,7 +469,7 @@ function renderItemRow(item, depth, map) {
     ? lockedCell("展开子层，在具体子层里选择 N/P", "-")
     : dopingTypeSelect(item.doping_type);
   return `
-    <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
+    <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-section="${escapeAttr(itemSection(item))}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
       <td class="action-cell">
         <div class="row-actions tree-actions">
           <button data-action="select-row" title="选择">•</button>
@@ -357,6 +495,51 @@ function renderItemRow(item, depth, map) {
       <td class="doping-type-cell">${dopingTypeCell}</td>
       <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" /></td>
       <td class="checkbox-cell"><input data-field="is_quantum_dot" type="checkbox" ${item.is_quantum_dot ? "checked" : ""} ${qdDisabled ? "disabled" : ""} /></td>
+      <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
+    </tr>
+  `;
+}
+
+function renderMachineItemRow(item, depth, map, section) {
+  const selected = item.id === state.selectedItemId ? "selected" : "";
+  const repeat = isRepeatItem(item, map);
+  const child = depth > 0 ? "child-row" : "";
+  const rowClass = repeat ? "repeat-row" : child;
+  const depthClass = depth > 0 ? "nested-row" : "root-row";
+  const animationClass = rowAnimationClass(item);
+  const levelOffset = depth * 32;
+  const railOffset = Math.max(0, levelOffset - 16);
+  const actionCell = `
+    <td class="action-cell">
+      <div class="row-actions tree-actions">
+        <button data-action="select-row" title="选择">•</button>
+        <button data-action="move-up" title="上移">↑</button>
+        <button data-action="move-down" title="下移">↓</button>
+        <button data-action="add-inner-row" title="添加子项">+</button>
+        <button data-action="save-shortcut" title="加入快捷项">☆</button>
+        <button data-action="delete-item" title="删除">×</button>
+      </div>
+    </td>
+  `;
+  if (section === AS_PRESSURE_SECTION) {
+    return `
+      <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-section="${AS_PRESSURE_SECTION}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
+        ${actionCell}
+        <td class="layer-name-cell"><div class="indent-cell"><input data-field="layer_name" value="${escapeAttr(item.layer_name)}" placeholder="如 GaAs As压" /></div></td>
+        <td><input data-field="material" value="${escapeAttr(item.material)}" placeholder="生长材料" /></td>
+        <td><input data-field="thickness_nm" value="${escapeAttr(blankNumber(item.thickness_nm))}" placeholder="如 3e-6" /></td>
+        <td><input data-field="doping" value="${escapeAttr(item.doping)}" placeholder="Value" /></td>
+        <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" placeholder="um/h" /></td>
+        <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
+      </tr>
+    `;
+  }
+  return `
+    <tr class="${selected} ${rowClass} ${child} ${depthClass} ${animationClass}" data-id="${item.id}" data-section="${DEFAULT_SECTION}" data-depth="${depth}" style="--level-offset:${levelOffset}px; --rail-offset:${railOffset}px">
+      ${actionCell}
+      <td class="layer-name-cell"><div class="indent-cell"><input data-field="layer_name" value="${escapeAttr(item.layer_name)}" placeholder="源炉" /></div></td>
+      <td><input data-field="thickness_nm" value="${escapeAttr(blankNumber(item.thickness_nm))}" placeholder="如 2e-7" /></td>
+      <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" placeholder="温度" /></td>
       <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
     </tr>
   `;
@@ -538,6 +721,7 @@ async function handleToolbarClick(event) {
   const action = button.dataset.action;
   try {
     if (action === "add-layer") await addLayer();
+    if (action === "add-as-pressure") await addLayer(AS_PRESSURE_SECTION);
     if (action === "add-inner-layer") await addInnerLayer();
     if (action === "undo-delete") await undoLastStep();
     if (action === "copy-item") copySelectedItem();
@@ -553,6 +737,7 @@ async function handleTableClick(event) {
   const row = event.target.closest("tr[data-id]");
   if (!row) return;
   const id = Number(row.dataset.id);
+  state.activeItemSection = normalizeItemSection(row.dataset.section);
   const actionButton = event.target.closest("button[data-action]");
   const locked = event.target.closest("[data-lock-message]");
   if (event.target.closest("input, textarea, select")) {
@@ -691,15 +876,16 @@ function scheduleItemSave(item) {
 
 async function createNewWafer() {
   try {
-    const wafer_code = prompt("片号", await nextWaferCode());
+    const machine = state.waferType === "machine";
+    const wafer_code = prompt(machine ? "日期编号" : "片号", await nextRecordCode());
     if (!wafer_code) return;
     const payload = await api("/api/wafers", {
       method: "POST",
       body: JSON.stringify({
         wafer_code,
         wafer_type: state.waferType,
-        size: "3英寸",
-        structure_name: state.waferType === "test" ? "测试片" : ""
+        size: machine ? "" : "3英寸",
+        structure_name: machine ? "MBE 参数" : state.waferType === "test" ? "测试片" : ""
       })
     });
     state.selectedItemId = null;
@@ -710,22 +896,29 @@ async function createNewWafer() {
   }
 }
 
-async function addLayer() {
-  const target = insertionTargetItem() || firstVisibleItem();
-  const reference = insertionReference(target);
+async function addLayer(section = state.activeItemSection || DEFAULT_SECTION) {
+  section = normalizeItemSection(section);
+  state.activeItemSection = section;
+  const target = insertionTargetItem();
+  const sameSectionTarget = target && itemSection(target) === section ? target : null;
+  const visibleTarget = sameSectionTarget || firstVisibleItem();
+  const reference = insertionReference(sameSectionTarget);
+  const machine = isMachineRecord();
+  const defaults = machine
+    ? machineItemDefaults(section)
+    : { layer_name: "新层", material: "", thickness_nm: 0 };
   const payload = await api(`/api/wafers/${state.current.id}/items`, {
     method: "POST",
     body: JSON.stringify({
       item_type: "layer",
+      section,
       ...reference.payload,
-      layer_name: "新层",
-      material: "",
-      thickness_nm: 0
+      ...defaults
     })
   });
   state.selectedItemId = payload.item.id;
   state.insertTargetItemId = payload.item.id;
-  await ensureItemBefore(payload.item.id, target?.id || null);
+  await ensureItemBefore(payload.item.id, visibleTarget?.id || null);
   queueRowAnimation(payload.item.id, "insert");
   await loadWafer(state.current.id);
 }
@@ -733,6 +926,7 @@ async function addLayer() {
 async function addInnerLayer() {
   const selected = insertionTargetItem();
   const map = childMap();
+  const machine = isMachineRecord();
   let parent = selected && isRepeatItem(selected, map) ? selected : null;
   let beforeTarget = null;
   if (!parent && selected?.parent_id) {
@@ -751,16 +945,34 @@ async function addInnerLayer() {
     scheduleItemSave(selected);
     parent = selected;
   }
+  if (!parent && selected && machine) {
+    selected.item_type = "repeat";
+    selected.periods = selected.periods || 1;
+    selected.doping_type = "";
+    selected.thickness_nm = null;
+    selected.single_period_thickness_nm = null;
+    selected.is_quantum_dot = 0;
+    scheduleItemSave(selected);
+    parent = selected;
+  }
   if (!parent) {
     showStatus("先选一层并填写周期 > 1");
     return;
   }
-  parent.material = "";
-  parent.doping = "";
-  parent.doping_type = "";
-  parent.thickness_nm = null;
-  parent.single_period_thickness_nm = null;
-  parent.is_quantum_dot = 0;
+  const section = itemSection(parent);
+  const inherited = machineItemDefaults(section, true, parent);
+  state.activeItemSection = section;
+  if (machine) {
+    parent.doping_type = "";
+    parent.is_quantum_dot = 0;
+  } else {
+    parent.material = "";
+    parent.doping = "";
+    parent.doping_type = "";
+    parent.thickness_nm = null;
+    parent.single_period_thickness_nm = null;
+    parent.is_quantum_dot = 0;
+  }
   scheduleItemSave(parent);
   state.collapsedItemIds.delete(parent.id);
   if (!beforeTarget) {
@@ -772,9 +984,8 @@ async function addInnerLayer() {
     body: JSON.stringify({
       ...reference.payload,
       item_type: "layer",
-      layer_name: "子层",
-      material: "",
-      thickness_nm: 0
+      section,
+      ...(machine ? inherited : { layer_name: "子层", material: "", thickness_nm: 0 })
     })
   });
   state.selectedItemId = payload.item.id;
@@ -882,7 +1093,14 @@ async function pasteItem() {
     showStatus("剪贴板为空");
     return;
   }
-  const target = insertionTargetItem() || firstVisibleItem();
+  const copied = state.current?.items.find((item) => item.id === state.copiedItemId);
+  if (isMachineRecord() && copied) {
+    state.activeItemSection = itemSection(copied);
+  }
+  const rawTarget = insertionTargetItem();
+  const target = rawTarget && (!isMachineRecord() || !copied || itemSection(rawTarget) === itemSection(copied))
+    ? rawTarget
+    : firstVisibleItem();
   const reference = insertionReference(target);
   const payload = await api(`/api/wafers/${state.current.id}/paste`, {
     method: "POST",
@@ -1121,6 +1339,37 @@ async function runExport(format, wafers) {
   showStatus(`已导出 ${wafers.length} 片结构图 PDF`);
 }
 
+async function exportGlobalBackup() {
+  try {
+    showStatus("正在生成全局备份");
+    const wafers = await loadAllExportWafers();
+    if (!wafers.length) {
+      showStatus("没有可备份的数据");
+      return;
+    }
+    const dateCode = currentShortDateCode();
+    const folder = `备份${dateCode}/`;
+    const formalWafers = wafers.filter((wafer) => normalizeWaferType(wafer.wafer_type) === "formal");
+    const entries = [
+      { name: `${folder}全部数据.json`, data: utf8Bytes(JSON.stringify({ wafers }, null, 2)) },
+      { name: `${folder}全部记录.csv`, data: utf8Bytes(csvForWafers(wafers)) },
+      { name: `${folder}全部记录.xlsx`, data: buildAllRecordsXlsx(wafers) },
+      { name: `${folder}正式片概要.xlsx`, data: buildFormalSummaryXlsx(formalWafers) }
+    ];
+    if (formalWafers.length) {
+      const pdfBlob = await buildWafersPdfBlob(formalWafers);
+      entries.push({ name: `${folder}正式片结构图.pdf`, data: new Uint8Array(await pdfBlob.arrayBuffer()) });
+    } else {
+      entries.push({ name: `${folder}正式片结构图-无正式片.txt`, data: utf8Bytes("当前没有正式片记录。") });
+    }
+    const zip = buildZip(entries);
+    downloadBlob(zip, `备份${dateCode}.zip`, "application/zip");
+    showStatus(`已生成全局备份：${wafers.length} 条记录`);
+  } catch (error) {
+    showError(error);
+  }
+}
+
 function askImportConflictDecision(waferCode) {
   return new Promise((resolve) => {
     const modal = showModal(`
@@ -1162,6 +1411,9 @@ function csvForWafers(wafers) {
     "wafer_type",
     "size",
     "structure_name",
+    "growth_date",
+    "sample_holder_code",
+    "notes",
     "as_beam_ratio",
     "qd_islanding_time_s",
     "qd_deposition_islanding_time_multiple",
@@ -1176,8 +1428,12 @@ function csvForWafers(wafers) {
     "pl_peak_nm",
     "pl_fwhm_nm",
     "pl_intensity",
+    "standby_vacuum",
+    "as_pressure_fill_vacuum",
+    "as_bulk_temp",
     "path",
     "type",
+    "section",
     "layer_name",
     "material",
     "thickness_nm",
@@ -1194,7 +1450,7 @@ function csvForWafers(wafers) {
     if ((map.get(null) || []).length) {
       writeCsvItemRows(rows, wafer, map, null, "");
     } else {
-      rows.push([...waferCsvPrefix(wafer), "", "wafer", "", "", "", "", "", "", "", "", "", ""]);
+      rows.push([...waferCsvPrefix(wafer), "", "wafer", "", "", "", "", "", "", "", "", "", "", ""]);
     }
   });
   return `\ufeff${rows.map((row) => row.map(csvCell).join(",")).join("\n")}`;
@@ -1207,6 +1463,7 @@ function writeCsvItemRows(rows, wafer, map, parentId, prefix) {
       ...waferCsvPrefix(wafer),
       path,
       item.item_type,
+      itemSection(item),
       item.layer_name,
       item.material,
       blankNumber(item.thickness_nm),
@@ -1228,6 +1485,9 @@ function waferCsvPrefix(wafer) {
     normalizeWaferType(wafer.wafer_type),
     wafer.size,
     wafer.structure_name,
+    wafer.growth_date,
+    wafer.sample_holder_code,
+    wafer.notes,
     wafer.as_beam_ratio,
     wafer.qd_islanding_time,
     wafer.qd_deposition,
@@ -1241,7 +1501,10 @@ function waferCsvPrefix(wafer) {
     wafer.qd_volume_cv,
     wafer.pl_peak_nm,
     wafer.pl_fwhm_nm,
-    wafer.pl_intensity
+    wafer.pl_intensity,
+    wafer.standby_vacuum,
+    wafer.as_pressure_fill_vacuum,
+    wafer.as_bulk_temp
   ];
 }
 
@@ -1249,6 +1512,308 @@ function csvCell(value) {
   const text = String(value ?? "");
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
+
+function buildAllRecordsXlsx(wafers) {
+  const allRows = [
+    [
+      "编号", "类型", "尺寸", "结构名称", "日期", "样品托编号", "备注",
+      "As 压束流比", "QD 成岛时间(s)", "生长速率(ML/S)", "QD 淀积量", "再构温度(°C)",
+      "QD 生长相对温度(°C)", "QD 生长实际温度(°C)", "QD 密度(cm-2)", "QD 体积中位数(nm3)",
+      "QD 高度(nm)", "QD 体积CV", "PL峰位(nm)", "FWHM(nm)", "PL强度",
+      "待机真空度", "As压充盈真空度", "As bulk温度"
+    ],
+    ...wafers.map((wafer) => [
+      wafer.wafer_code, normalizeWaferType(wafer.wafer_type), wafer.size, wafer.structure_name, wafer.growth_date,
+      wafer.sample_holder_code, wafer.notes, wafer.as_beam_ratio, wafer.qd_islanding_time,
+      computedGrowthRate(wafer.qd_islanding_time), wafer.qd_deposition, wafer.reconstruction_temp,
+      wafer.qd_growth_temp_offset, computedQdGrowthTemp(wafer.reconstruction_temp, wafer.qd_growth_temp_offset, wafer.qd_growth_temp),
+      wafer.qd_density, wafer.qd_volume, wafer.qd_height, wafer.qd_volume_cv, wafer.pl_peak_nm, wafer.pl_fwhm_nm,
+      wafer.pl_intensity, wafer.standby_vacuum, wafer.as_pressure_fill_vacuum, wafer.as_bulk_temp
+    ])
+  ];
+  const itemRows = [[
+    "编号", "类型", "路径", "区块", "行类型", "层名/源炉/As压", "材料/生长材料", "厚度/束流",
+    "周期/组", "单周期", "掺杂/Value", "N/P", "温度/生长速率", "QD", "备注"
+  ]];
+  wafers.forEach((wafer) => {
+    const map = childMapForItems(wafer.items || []);
+    writeXlsxItemRows(itemRows, wafer, map, null, "");
+  });
+  return xlsxBytes([
+    ["记录", allRows],
+    ["层与参数", itemRows],
+    ["MBE源炉", machineRows(wafers, DEFAULT_SECTION)],
+    ["As压", machineRows(wafers, AS_PRESSURE_SECTION)]
+  ]);
+}
+
+function writeXlsxItemRows(rows, wafer, map, parentId, prefix) {
+  (map.get(parentId) || []).forEach((item, index) => {
+    const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+    rows.push([
+      wafer.wafer_code,
+      normalizeWaferType(wafer.wafer_type),
+      path,
+      itemSection(item),
+      item.item_type,
+      item.layer_name,
+      item.material,
+      blankNumber(item.thickness_nm),
+      blankNumber(item.periods),
+      blankNumber(item.single_period_thickness_nm),
+      item.doping,
+      item.doping_type,
+      item.growth_temp,
+      item.is_quantum_dot ? "是" : "",
+      item.notes
+    ]);
+    writeXlsxItemRows(rows, wafer, map, item.id, path);
+  });
+}
+
+function machineRows(wafers, section) {
+  const header = section === AS_PRESSURE_SECTION
+    ? ["日期编号", "路径", "As压名称", "生长材料", "束流(Torr)", "Value", "生长速率(um/h)", "备注"]
+    : ["日期编号", "路径", "源炉", "材料", "束流(Torr)", "温度", "备注"];
+  const rows = [header];
+  wafers
+    .filter((wafer) => normalizeWaferType(wafer.wafer_type) === "machine")
+    .forEach((wafer) => {
+      const map = childMapForItems(wafer.items || []);
+      appendMachineRows(rows, wafer, map, null, "", section);
+    });
+  return rows;
+}
+
+function appendMachineRows(rows, wafer, map, parentId, prefix, section) {
+  (map.get(parentId) || [])
+    .filter((item) => parentId !== null || itemSection(item) === section)
+    .forEach((item, index) => {
+      const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+      if (section === AS_PRESSURE_SECTION) {
+        rows.push([wafer.wafer_code, path, item.layer_name, item.material, blankNumber(item.thickness_nm), item.doping, item.growth_temp, item.notes]);
+      } else {
+        rows.push([wafer.wafer_code, path, item.layer_name, item.material, blankNumber(item.thickness_nm), item.growth_temp, item.notes]);
+      }
+      appendMachineRows(rows, wafer, map, item.id, path, section);
+    });
+}
+
+function buildFormalSummaryXlsx(wafers) {
+  const rows = [[
+    "片号", "结构名称", "尺寸", "日期", "样品托编号", "总厚度(nm)", "量子点层数",
+    "有源区掺杂方式", "有源区掺杂详情", "盖层厚度(nm)", "备注"
+  ]];
+  wafers.forEach((wafer) => {
+    const map = childMapForItems(wafer.items || []);
+    const stats = computeStatsForItems(wafer.items || []);
+    rows.push([
+      wafer.wafer_code,
+      wafer.structure_name,
+      wafer.size,
+      wafer.growth_date,
+      wafer.sample_holder_code,
+      formatNumber(stats.totalThickness),
+      formatNumber(stats.qdLayerCount),
+      activeDopingMethod(stats.activeRegionDopedItems),
+      stats.activeRegionDopedItems.map(dopingDetailText).join("；"),
+      formatNumber(capThicknessAboveWaveguide(wafer.items || [], map)),
+      wafer.notes
+    ]);
+  });
+  return xlsxBytes([["正式片概要", rows]]);
+}
+
+function computeStatsForItems(items) {
+  return computeStats(childMapForItems(items));
+}
+
+function activeDopingMethod(details) {
+  const text = details.map((detail) => `${detail.doping || ""} ${detail.doping_type || ""}`).join(" ").toLowerCase();
+  const hasBe = /be|p\b/.test(text);
+  const hasSi = /si|n\b/.test(text);
+  if (hasBe && hasSi) return "codoping";
+  if (hasBe) return "Be";
+  if (hasSi) return "Si";
+  return details.length ? "其他" : "";
+}
+
+function capThicknessAboveWaveguide(items, map) {
+  const leaves = flattenAllLeaves(items, map);
+  const waveguideIndex = leaves.findIndex((item) => /波导|waveguide/i.test(`${item.layer_name || ""} ${item.material || ""}`));
+  if (waveguideIndex <= 0) return 0;
+  return leaves.slice(0, waveguideIndex).reduce((sum, item) => sum + (isQuantumDot(item) ? 0 : numberValue(item.thickness_nm)), 0);
+}
+
+function flattenAllLeaves(items, map) {
+  const rows = [];
+  (items || []).forEach((item) => {
+    const children = map.get(item.id) || [];
+    if (children.length) {
+      rows.push(...flattenAllLeaves(children, map));
+    } else {
+      rows.push(item);
+    }
+  });
+  return rows;
+}
+
+function xlsxBytes(sheets) {
+  const files = [];
+  files.push(["[Content_Types].xml", contentTypesXml(sheets.length)]);
+  files.push(["_rels/.rels", rootRelsXml()]);
+  files.push(["xl/workbook.xml", workbookXml(sheets)]);
+  files.push(["xl/_rels/workbook.xml.rels", workbookRelsXml(sheets.length)]);
+  sheets.forEach(([name, rows], index) => {
+    files.push([`xl/worksheets/sheet${index + 1}.xml`, worksheetXml(rows)]);
+  });
+  return zipBytes(files.map(([name, text]) => ({ name, data: utf8Bytes(text) })));
+}
+
+function contentTypesXml(count) {
+  const sheets = Array.from({ length: count }, (_, index) => `<Override PartName="/xl/worksheets/sheet${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>${sheets}</Types>`;
+}
+
+function rootRelsXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+}
+
+function workbookXml(sheets) {
+  const sheetXml = sheets.map(([name], index) => `<sheet name="${xmlEscape(safeSheetName(name))}" sheetId="${index + 1}" r:id="rId${index + 1}"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheetXml}</sheets></workbook>`;
+}
+
+function workbookRelsXml(count) {
+  const rels = Array.from({ length: count }, (_, index) => `<Relationship Id="rId${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`;
+}
+
+function worksheetXml(rows) {
+  const rowXml = rows.map((row, rowIndex) => {
+    const cells = row.map((value, colIndex) => {
+      const ref = `${columnName(colIndex + 1)}${rowIndex + 1}`;
+      return `<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(value)}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowIndex + 1}">${cells}</row>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${rowXml}</sheetData></worksheet>`;
+}
+
+function columnName(index) {
+  let name = "";
+  let value = index;
+  while (value > 0) {
+    value -= 1;
+    name = String.fromCharCode(65 + (value % 26)) + name;
+    value = Math.floor(value / 26);
+  }
+  return name;
+}
+
+function safeSheetName(name) {
+  return String(name || "Sheet").replace(/[:\\/?*\[\]]/g, "").slice(0, 31) || "Sheet";
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function utf8Bytes(text) {
+  return new TextEncoder().encode(String(text ?? ""));
+}
+
+function buildZip(entries) {
+  return new Blob([zipBytes(entries)], { type: "application/zip" });
+}
+
+function zipBytes(entries) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  let offset = 0;
+  entries.forEach((entry) => {
+    const nameBytes = encoder.encode(entry.name);
+    const data = entry.data instanceof Uint8Array ? entry.data : utf8Bytes(entry.data);
+    const crc = crc32(data);
+    const sizes = data.length;
+    const { time, date } = dosDateTime(new Date());
+    const local = concatBytes(
+      u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(sizes), u32(sizes), u16(nameBytes.length), u16(0), nameBytes, data
+    );
+    localParts.push(local);
+    const central = concatBytes(
+      u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(sizes), u32(sizes), u16(nameBytes.length), u16(0), u16(0),
+      u16(0), u16(0), u32(0), u32(offset), nameBytes
+    );
+    centralParts.push(central);
+    offset += local.length;
+  });
+  const centralOffset = offset;
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = concatBytes(
+    u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length),
+    u32(centralSize), u32(centralOffset), u16(0)
+  );
+  return concatBytes(...localParts, ...centralParts, end);
+}
+
+function dosDateTime(date) {
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, date: dosDate };
+}
+
+function concatBytes(...parts) {
+  const length = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  parts.forEach((part) => {
+    out.set(part, offset);
+    offset += part.length;
+  });
+  return out;
+}
+
+function u16(value) {
+  const bytes = new Uint8Array(2);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(0, value & 0xffff, true);
+  return bytes;
+}
+
+function u32(value) {
+  const bytes = new Uint8Array(4);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, value >>> 0, true);
+  return bytes;
+}
+
+function crc32(data) {
+  let crc = 0xffffffff;
+  for (let index = 0; index < data.length; index += 1) {
+    crc = CRC32_TABLE[(crc ^ data[index]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
 
 function downloadBlob(content, filename, type) {
   const blob = content instanceof Blob ? content : new Blob([content], { type });
@@ -1263,14 +1828,18 @@ function downloadBlob(content, filename, type) {
 
 async function downloadWafersPdf(wafers) {
   showStatus(`正在生成 ${wafers.length} 页 PDF`);
+  const pdf = await buildWafersPdfBlob(wafers);
+  downloadBlob(pdf, "mbe-structure-images.pdf", "application/pdf");
+}
+
+async function buildWafersPdfBlob(wafers) {
   const pages = [];
   for (const wafer of wafers) {
     const canvas = renderWaferPngCanvas(wafer);
     const jpeg = await canvasToJpegBytes(canvas);
     pages.push({ wafer, jpeg, width: canvas.width, height: canvas.height });
   }
-  const pdf = buildImagePdf(pages);
-  downloadBlob(pdf, "mbe-structure-images.pdf", "application/pdf");
+  return buildImagePdf(pages);
 }
 
 async function canvasToJpegBytes(canvas) {
@@ -1382,7 +1951,7 @@ function renderWaferPngCanvas(wafer) {
   const roots = map.get(null) || [];
   const segments = stackCanvasParts(roots, map, true, STACK_VIEW_HEIGHT);
   const stackHeight = Math.max(STACK_VIEW_HEIGHT, Math.ceil(sumCanvasHeights(segments)));
-  const width = 980;
+  const width = 1180;
   const height = stackHeight + 150;
   const scale = 2;
   const canvas = document.createElement("canvas");
@@ -1396,6 +1965,7 @@ function renderWaferPngCanvas(wafer) {
   ctx.fillRect(0, 0, width, height);
   drawReportHeader(ctx, wafer, width);
   drawStackParts(ctx, segments, map, 40, 110, 620, stackHeight);
+  drawWaferSidePanel(ctx, wafer, map, 700, 110, 430, stackHeight);
   return canvas;
 }
 
@@ -1415,6 +1985,69 @@ function drawReportHeader(ctx, wafer, width) {
   ctx.fillStyle = "#68726b";
   ctx.fillText(`${stats.layerCount} 层 · ${stats.repeatCount} 重复层 · ${formatNumber(stats.qdLayerCount)} QD · ${stats.dopedItems.length} 掺杂层`, width - 40, 76);
   ctx.textAlign = "left";
+}
+
+function drawWaferSidePanel(ctx, wafer, map, x, y, width, height) {
+  const stats = computeStatsForItems(wafer.items || []);
+  ctx.save();
+  roundedRect(ctx, x, y, width, height, 10);
+  ctx.fillStyle = "#f7faf6";
+  ctx.fill();
+  ctx.strokeStyle = "#d9ded6";
+  ctx.stroke();
+  ctx.fillStyle = "#18201d";
+  ctx.font = "700 18px sans-serif";
+  ctx.fillText("附加信息", x + 18, y + 30);
+  const rows = [
+    ["样品托", wafer.sample_holder_code],
+    ["日期", wafer.growth_date],
+    ["备注", wafer.notes],
+    ["QD层数", formatNumber(stats.qdLayerCount)],
+    ["有源区掺杂", activeDopingMethod(stats.activeRegionDopedItems)],
+    ["盖层厚度", `${formatNumber(capThicknessAboveWaveguide(wafer.items || [], map))} nm`],
+    ["As压束流比", wafer.as_beam_ratio],
+    ["QD成岛时间", wafer.qd_islanding_time],
+    ["生长速率", computedGrowthRate(wafer.qd_islanding_time) ? `${computedGrowthRate(wafer.qd_islanding_time)} ML/S` : ""],
+    ["QD淀积量", wafer.qd_deposition],
+    ["再构温度", wafer.reconstruction_temp],
+    ["QD生长温度", computedQdGrowthTemp(wafer.reconstruction_temp, wafer.qd_growth_temp_offset, wafer.qd_growth_temp)],
+    ["QD密度", wafer.qd_density],
+    ["QD体积中位数", wafer.qd_volume],
+    ["QD高度", wafer.qd_height],
+    ["PL峰位", wafer.pl_peak_nm],
+    ["FWHM", wafer.pl_fwhm_nm],
+    ["PL强度", wafer.pl_intensity]
+  ].filter(([, value]) => String(value || "").trim());
+  let cursor = y + 58;
+  rows.forEach(([label, value]) => {
+    if (cursor > y + height - 24) return;
+    ctx.fillStyle = "#68726b";
+    ctx.font = "12px sans-serif";
+    ctx.fillText(label, x + 18, cursor);
+    ctx.fillStyle = "#18201d";
+    ctx.font = "700 13px sans-serif";
+    wrapCanvasText(ctx, String(value), x + 118, cursor, width - 140, 16, 2);
+    cursor += 36;
+  });
+  ctx.restore();
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 2) {
+  const chars = Array.from(text);
+  let line = "";
+  let lines = 0;
+  for (let index = 0; index < chars.length; index += 1) {
+    const test = line + chars[index];
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y + lines * lineHeight);
+      lines += 1;
+      line = chars[index];
+      if (lines >= maxLines) return;
+    } else {
+      line = test;
+    }
+  }
+  if (line && lines < maxLines) ctx.fillText(line, x, y + lines * lineHeight);
 }
 
 function stackCanvasParts(items, map, fixedScale, availableHeight) {
@@ -1691,13 +2324,17 @@ function delay(ms) {
 function selectItem(id) {
   state.selectedItemId = id;
   state.insertTargetItemId = id;
+  const item = state.current?.items.find((candidate) => candidate.id === id);
+  if (item) state.activeItemSection = itemSection(item);
   renderItems();
 }
 
 function markSelectedRow(id) {
   state.selectedItemId = id;
   state.insertTargetItemId = id;
-  els.layerTableBody.querySelectorAll("tr[data-id]").forEach((row) => {
+  const item = state.current?.items.find((candidate) => candidate.id === id);
+  if (item) state.activeItemSection = itemSection(item);
+  document.querySelectorAll("tbody tr[data-id]").forEach((row) => {
     row.classList.toggle("selected", Number(row.dataset.id) === id);
   });
 }
@@ -1705,6 +2342,7 @@ function markSelectedRow(id) {
 function rememberTableTarget(event) {
   const row = event.target.closest("tr[data-id]");
   if (!row) return;
+  state.activeItemSection = normalizeItemSection(row.dataset.section);
   markSelectedRow(Number(row.dataset.id));
 }
 
@@ -1716,6 +2354,7 @@ function selectedItem() {
 function insertionTargetItem() {
   if (!state.current) return null;
   const activeRow = document.activeElement?.closest?.("tr[data-id]");
+  if (activeRow) state.activeItemSection = normalizeItemSection(activeRow.dataset.section);
   const ids = [
     activeRow ? Number(activeRow.dataset.id) : null,
     state.insertTargetItemId,
@@ -1774,7 +2413,7 @@ async function ensureItemBefore(itemId, targetId) {
 
 function firstVisibleItem() {
   if (!state.current) return null;
-  return flattenItems(null, 0, childMap())[0]?.item || null;
+  return flattenItems(null, 0, childMap(), state.activeItemSection)[0]?.item || null;
 }
 
 function childMap() {
@@ -1788,12 +2427,14 @@ function childMap() {
   return map;
 }
 
-function flattenItems(parentId = null, depth = 0, map = childMap()) {
+function flattenItems(parentId = null, depth = 0, map = childMap(), section = null) {
   const rows = [];
-  (map.get(parentId) || []).forEach((item) => {
+  (map.get(parentId) || [])
+    .filter((item) => parentId !== null || !section || itemSection(item) === section)
+    .forEach((item) => {
     rows.push({ item, depth });
-    if (isRepeatItem(item, map) && isExpanded(item)) {
-      rows.push(...flattenItems(item.id, depth + 1, map));
+    if (isRepeatItem(item, map) && (isMachineRecord() || isExpanded(item))) {
+      rows.push(...flattenItems(item.id, depth + 1, map, section));
     }
   });
   return rows;
@@ -1804,6 +2445,7 @@ function isRepeatItem(item, map = childMap()) {
 }
 
 function isExpanded(item) {
+  if (isMachineRecord()) return true;
   return !state.collapsedItemIds.has(item.id);
 }
 
@@ -1842,6 +2484,10 @@ async function toggleExpandedAnimated(id) {
 }
 
 function normalizeRepeatState(item, map = childMap()) {
+  if (isMachineRecord()) {
+    item.item_type = isRepeatItem(item, map) ? "repeat" : "layer";
+    return;
+  }
   const hasChildren = (map.get(item.id) || []).length > 0;
   const periods = numberValue(item.periods);
   if (periods > 1 || hasChildren) {
@@ -1870,9 +2516,11 @@ function itemPayload(item) {
 
 function renderInspector() {
   if (!state.current) {
-    els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
-    els.statsContent.innerHTML = "";
-    els.totalThickness.textContent = "0 nm";
+    clearInspector();
+    return;
+  }
+  if (isMachineRecord()) {
+    clearInspector();
     return;
   }
   const map = childMap();
@@ -1880,6 +2528,54 @@ function renderInspector() {
   els.totalThickness.textContent = `${formatNumber(stats.totalThickness)} nm`;
   renderStack(map);
   renderStats(stats);
+}
+
+function clearInspector() {
+  els.stackVisual.innerHTML = `<div class="stack-empty">暂无结构</div>`;
+  els.statsContent.innerHTML = "";
+  els.totalThickness.textContent = "0 nm";
+}
+
+function renderMachineInspector() {
+  const map = childMap();
+  const sourceRoots = (map.get(null) || []).filter((item) => itemSection(item) === DEFAULT_SECTION);
+  const asRoots = (map.get(null) || []).filter((item) => itemSection(item) === AS_PRESSURE_SECTION);
+  const sourceRows = sourceRoots.map((item) => machineSummaryRow(item, map, DEFAULT_SECTION)).join("");
+  const asRows = asRoots.map((item) => machineSummaryRow(item, map, AS_PRESSURE_SECTION)).join("");
+  els.totalThickness.textContent = `${sourceRoots.length} 源炉 · ${asRoots.length} As压`;
+  els.stackVisual.innerHTML = `
+    <div class="machine-summary">
+      <div class="metric-grid">
+        <div class="metric"><strong>${escapeHtml(state.current.standby_vacuum || "-")}</strong><span>待机真空度</span></div>
+        <div class="metric"><strong>${escapeHtml(state.current.as_pressure_fill_vacuum || "-")}</strong><span>As 压充盈</span></div>
+        <div class="metric"><strong>${escapeHtml(state.current.as_bulk_temp || "-")}</strong><span>As bulk 温度</span></div>
+      </div>
+    </div>
+  `;
+  els.statsContent.innerHTML = `
+    <div>
+      <div class="section-title"><h2>源炉概览</h2></div>
+      <div class="doping-list">${sourceRows || `<span class="wafer-meta">暂无源炉参数</span>`}</div>
+    </div>
+    <div>
+      <div class="section-title"><h2>As 压概览</h2></div>
+      <div class="doping-list">${asRows || `<span class="wafer-meta">暂无 As 压参数</span>`}</div>
+    </div>
+  `;
+}
+
+function machineSummaryRow(item, map, section) {
+  const children = map.get(item.id) || [];
+  const countText = children.length ? `，${children.length} 子项` : "";
+  const main = section === AS_PRESSURE_SECTION
+    ? [item.material, item.thickness_nm ? `${item.thickness_nm} Torr` : "", item.doping ? `Value ${item.doping}` : "", item.growth_temp ? `${item.growth_temp} um/h` : ""]
+    : [item.material, item.thickness_nm ? `${item.thickness_nm} Torr` : "", item.growth_temp ? `${item.growth_temp} °C` : ""];
+  return `
+    <div class="stat-row">
+      <span>${escapeHtml(item.layer_name || item.material || "未命名")}</span>
+      <strong>${escapeHtml(main.filter(Boolean).join(" · ") || "-")}${escapeHtml(countText)}</strong>
+    </div>
+  `;
 }
 
 function renderStack(map) {
@@ -2222,7 +2918,50 @@ function normalizeDopingType(value) {
 }
 
 function normalizeWaferType(value) {
-  return String(value || "").trim().toLowerCase() === "test" ? "test" : "formal";
+  const text = String(value || "").trim().toLowerCase();
+  return ["formal", "test", "machine"].includes(text) ? text : "formal";
+}
+
+function normalizeItemSection(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return text === AS_PRESSURE_SECTION ? AS_PRESSURE_SECTION : DEFAULT_SECTION;
+}
+
+function itemSection(item) {
+  return normalizeItemSection(item?.section);
+}
+
+function isMachineRecord(wafer = state.current) {
+  return normalizeWaferType(wafer?.wafer_type) === "machine";
+}
+
+function machineItemDefaults(section, child = false, parent = null) {
+  if (section === AS_PRESSURE_SECTION) {
+    return {
+      layer_name: child ? parent?.layer_name || "As压子项" : "As压",
+      material: child ? parent?.material || "" : "",
+      thickness_nm: "",
+      periods: "",
+      single_period_thickness_nm: "",
+      doping: "",
+      doping_type: "",
+      growth_temp: "",
+      is_quantum_dot: 0,
+      notes: ""
+    };
+  }
+  return {
+    layer_name: child ? parent?.layer_name || "源炉子项" : "源炉",
+    material: child ? parent?.material || "" : "",
+    thickness_nm: "",
+    periods: "",
+    single_period_thickness_nm: "",
+    doping: "",
+    doping_type: "",
+    growth_temp: "",
+    is_quantum_dot: 0,
+    notes: ""
+  };
 }
 
 function computedGrowthRate(value) {
@@ -2280,6 +3019,7 @@ function normalizeShortcut(shortcut) {
   );
   return {
     item_type: shortcut.item_type || (numberValue(shortcut.periods) > 1 && !shortcut.is_quantum_dot ? "repeat" : "layer"),
+    section: normalizeItemSection(shortcut.section),
     layer_name: layerName,
     material: shortcut.material || "",
     thickness_nm: shortcut.thickness_nm || "",
@@ -2398,15 +3138,19 @@ async function insertShortcutLayer(shortcut) {
     showStatus("先选择外延片");
     return;
   }
-  const target = insertionTargetItem() || firstVisibleItem();
-  const tree = shortcutTreeForInsert(shortcut, target);
+  const shortcutSection = normalizeItemSection(shortcut.section || state.activeItemSection);
+  state.activeItemSection = shortcutSection;
+  const target = insertionTargetItem();
+  const sameSectionTarget = target && itemSection(target) === shortcutSection ? target : null;
+  const visibleTarget = sameSectionTarget || firstVisibleItem();
+  const tree = shortcutTreeForInsert(shortcut, sameSectionTarget, shortcutSection);
   const result = await api(`/api/wafers/${state.current.id}/restore`, {
     method: "POST",
     body: JSON.stringify({ tree })
   });
   state.selectedItemId = result.item.id;
   state.insertTargetItemId = result.item.id;
-  await ensureItemBefore(result.item.id, target?.id || null);
+  await ensureItemBefore(result.item.id, visibleTarget?.id || null);
   queueRowAnimation(result.item.id, "insert");
   await loadWafer(state.current.id);
   showStatus(`${shortcutTitle(shortcut)} 已插入`);
@@ -2436,6 +3180,7 @@ function saveItemAsShortcut(itemId) {
 function itemToShortcut(item, map) {
   return normalizeShortcut({
     item_type: isRepeatItem(item, map) ? "repeat" : "layer",
+    section: itemSection(item),
     layer_name: item.layer_name || "",
     material: item.material || "",
     thickness_nm: blankNumber(item.thickness_nm),
@@ -2450,11 +3195,13 @@ function itemToShortcut(item, map) {
   });
 }
 
-function shortcutTreeForInsert(shortcut, target) {
+function shortcutTreeForInsert(shortcut, target, section = DEFAULT_SECTION) {
   const tree = shortcutToTree(shortcut);
+  tree.section = normalizeItemSection(section);
   if (target) {
     tree.parent_id = target.parent_id ?? null;
     tree.order_index = target.order_index;
+    tree.section = itemSection(target);
   } else {
     tree.parent_id = null;
     delete tree.order_index;
@@ -2468,6 +3215,7 @@ function shortcutToTree(shortcut) {
   const periods = numberValue(normalized.periods);
   return {
     item_type: periods > 1 && !isQd ? "repeat" : normalized.item_type || "layer",
+    section: normalizeItemSection(normalized.section),
     layer_name: normalized.layer_name || "新层",
     material: normalized.material || "",
     thickness_nm: isQd ? normalized.thickness_nm : normalized.thickness_nm || 0,
@@ -2478,7 +3226,11 @@ function shortcutToTree(shortcut) {
     growth_temp: normalized.growth_temp || "",
     is_quantum_dot: isQd ? 1 : 0,
     notes: normalized.notes || "",
-    children: (normalized.children || []).map(shortcutToTree)
+    children: (normalized.children || []).map((child) => {
+      const childTree = shortcutToTree(child);
+      childTree.section = normalizeItemSection(normalized.section);
+      return childTree;
+    })
   };
 }
 
@@ -2495,6 +3247,7 @@ function pickWaferFields(wafer) {
     structure_name: wafer.structure_name,
     growth_date: wafer.growth_date,
     notes: wafer.notes,
+    sample_holder_code: wafer.sample_holder_code,
     wafer_type: normalizeWaferType(wafer.wafer_type),
     growth_rate: growthRate,
     qd_growth_temp: qdGrowthTemp
@@ -2504,7 +3257,17 @@ function pickWaferFields(wafer) {
       payload[field] = wafer[field] || "";
     }
   });
+  MACHINE_WAFER_FIELDS.forEach((field) => {
+    payload[field] = wafer[field] || "";
+  });
   return payload;
+}
+
+async function nextRecordCode() {
+  if (state.waferType === "machine") {
+    return nextMachineRecordCode();
+  }
+  return nextWaferCode();
 }
 
 async function nextWaferCode() {
@@ -2518,12 +3281,27 @@ async function nextWaferCode() {
   }
 }
 
+async function nextMachineRecordCode() {
+  const prefix = currentShortDateCode();
+  try {
+    const payload = await api(`/api/wafers?search=${encodeURIComponent(prefix)}&type=machine`);
+    return uniquePlainCode(prefix, payload.wafers || []);
+  } catch (error) {
+    console.warn(error);
+    return uniquePlainCode(prefix, state.wafers || []);
+  }
+}
+
 function currentWaferDatePrefix() {
+  return `N${currentShortDateCode()}`;
+}
+
+function currentShortDateCode() {
   const date = new Date();
   const yy = String(date.getFullYear()).slice(-2);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  return `N${yy}${mm}${dd}`;
+  return `${yy}${mm}${dd}`;
 }
 
 function nextWaferCodeFromExisting(prefix, wafers) {
@@ -2553,6 +3331,14 @@ function waferIndexLetter(index) {
     value = Math.floor(value / 26);
   }
   return letters;
+}
+
+function uniquePlainCode(prefix, wafers) {
+  const used = new Set((wafers || []).map((wafer) => String(wafer.wafer_code || "").trim()).filter(Boolean));
+  if (!used.has(prefix)) return prefix;
+  let index = 2;
+  while (used.has(`${prefix}-${index}`)) index += 1;
+  return `${prefix}-${index}`;
 }
 
 function numberValue(value) {

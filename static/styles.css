@@ -22,6 +22,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -94,6 +98,10 @@ input[readonly] {
   display: grid;
   grid-template-columns: 280px minmax(680px, 1fr) 430px;
   min-height: 100vh;
+}
+
+.app-shell.machine-mode {
+  grid-template-columns: 280px minmax(820px, 1fr);
 }
 
 .sidebar,
@@ -205,6 +213,10 @@ input[readonly] {
   border-left: 4px solid #8f2f51;
 }
 
+.wafer-item.machine-wafer {
+  border-left: 4px solid #2f6f8f;
+}
+
 .wafer-select {
   display: grid;
   place-items: center;
@@ -309,6 +321,10 @@ input[readonly] {
   grid-template-columns: repeat(3, minmax(150px, 1fr));
 }
 
+.machine-fields {
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+}
+
 .toolbar {
   min-height: 46px;
   padding: 8px;
@@ -340,12 +356,37 @@ input[readonly] {
   box-shadow: var(--shadow);
 }
 
+.table-section-title {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  padding: 10px 12px 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  background: var(--panel);
+}
+
+.machine-as-section {
+  flex: 0 0 auto;
+  min-height: 260px;
+}
+
 .layer-table {
   width: 100%;
   min-width: 1250px;
   border-collapse: separate;
   border-spacing: 0;
   --row-swap-distance: 46px;
+}
+
+.machine-as-section .layer-table,
+body:has(#machineFields:not([hidden])) .table-wrap:first-of-type .layer-table {
+  min-width: 940px;
+}
+
+.machine-summary {
+  padding: 12px;
 }
 
 .layer-table th,

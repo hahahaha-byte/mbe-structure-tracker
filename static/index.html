@@ -20,11 +20,13 @@
         <div class="wafer-type-tabs" id="waferTypeTabs" role="tablist" aria-label="片子类型">
           <button class="active" data-wafer-type="formal" type="button">正式片</button>
           <button data-wafer-type="test" type="button">测试片</button>
+          <button data-wafer-type="machine" type="button">MBE 参数</button>
         </div>
 
         <div class="sidebar-actions">
           <input id="searchInput" type="search" placeholder="搜索片号 / 结构" />
           <button id="importJsonBtn">导入 JSON</button>
+          <button id="backupExportBtn">全局导出备份</button>
           <button id="deleteSelectedWafersBtn" class="danger-btn" disabled>删除选中</button>
           <input id="jsonImportInput" type="file" accept=".json,application/json" multiple hidden />
         </div>
@@ -35,7 +37,7 @@
       <main class="editor">
         <section class="wafer-header">
           <label>
-            <span>片号</span>
+            <span id="codeFieldLabel">片号</span>
             <input data-wafer-field="wafer_code" id="waferCode" />
           </label>
           <label>
@@ -49,6 +51,10 @@
           <label>
             <span>日期</span>
             <input data-wafer-field="growth_date" id="growthDate" type="date" />
+          </label>
+          <label id="sampleHolderField">
+            <span>样品托编号</span>
+            <input data-wafer-field="sample_holder_code" id="sampleHolderCode" />
           </label>
           <label class="wide notes">
             <span>备注</span>
@@ -113,10 +119,26 @@
           </label>
         </section>
 
+        <section class="wafer-header machine-fields" id="machineFields" hidden>
+          <label>
+            <span>待机真空度</span>
+            <input data-wafer-field="standby_vacuum" id="standbyVacuum" />
+          </label>
+          <label>
+            <span>As 压充盈真空度</span>
+            <input data-wafer-field="as_pressure_fill_vacuum" id="asPressureFillVacuum" />
+          </label>
+          <label>
+            <span>As bulk 温度</span>
+            <input data-wafer-field="as_bulk_temp" id="asBulkTemp" />
+          </label>
+        </section>
+
         <section class="toolbar">
           <div class="tool-group">
             <button data-action="add-layer">+ 层</button>
             <button data-action="add-inner-layer">+ 子层</button>
+            <button data-action="add-as-pressure" id="addAsPressureBtn" hidden>+ As压</button>
             <button data-action="undo-delete" id="undoDeleteBtn" disabled>撤回上一步</button>
           </div>
           <div class="tool-group">
@@ -131,9 +153,10 @@
         </section>
 
         <section class="table-wrap">
+          <div class="table-section-title" id="primaryTableTitle">层结构</div>
           <table class="layer-table">
             <thead>
-              <tr>
+              <tr id="layerTableHead">
                 <th class="actions-col"></th>
                 <th>状态</th>
                 <th>层名</th>
@@ -149,6 +172,16 @@
               </tr>
             </thead>
             <tbody id="layerTableBody"></tbody>
+          </table>
+        </section>
+
+        <section class="table-wrap machine-as-section" id="asPressureSection" hidden>
+          <div class="table-section-title">As 压参数</div>
+          <table class="layer-table">
+            <thead>
+              <tr id="asPressureTableHead"></tr>
+            </thead>
+            <tbody id="asPressureTableBody"></tbody>
           </table>
         </section>
 

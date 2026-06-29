@@ -13,6 +13,7 @@ SAMPLE_DATA_PATH = ROOT_DIR / "data" / "sample_wafers.json"
 
 ITEM_FIELDS = (
     "item_type",
+    "section",
     "parent_id",
     "order_index",
     "layer_name",
@@ -27,16 +28,18 @@ ITEM_FIELDS = (
     "is_quantum_dot",
 )
 
-TEXT_ITEM_FIELDS = {"item_type", "layer_name", "material", "doping", "doping_type", "growth_temp", "notes"}
+TEXT_ITEM_FIELDS = {"item_type", "section", "layer_name", "material", "doping", "doping_type", "growth_temp", "notes"}
 FLOAT_ITEM_FIELDS = {"thickness_nm", "single_period_thickness_nm"}
 INT_ITEM_FIELDS = {"parent_id", "order_index", "periods", "is_quantum_dot"}
-WAFER_TYPES = {"formal", "test"}
+ITEM_SECTIONS = {"source", "as_pressure"}
+WAFER_TYPES = {"formal", "test", "machine"}
 WAFER_FIELDS = (
     "wafer_code",
     "size",
     "structure_name",
     "growth_date",
     "notes",
+    "sample_holder_code",
     "wafer_type",
     "as_beam_ratio",
     "qd_islanding_time",
@@ -52,6 +55,9 @@ WAFER_FIELDS = (
     "pl_peak_nm",
     "pl_fwhm_nm",
     "pl_intensity",
+    "standby_vacuum",
+    "as_pressure_fill_vacuum",
+    "as_bulk_temp",
 )
 TEST_WAFER_FIELDS = (
     "as_beam_ratio",
@@ -68,6 +74,11 @@ TEST_WAFER_FIELDS = (
     "pl_peak_nm",
     "pl_fwhm_nm",
     "pl_intensity",
+)
+MACHINE_WAFER_FIELDS = (
+    "standby_vacuum",
+    "as_pressure_fill_vacuum",
+    "as_bulk_temp",
 )
 
 
@@ -104,6 +115,7 @@ def init_db(db_path: Path | str) -> None:
                 structure_name TEXT DEFAULT '',
                 growth_date TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
+                sample_holder_code TEXT DEFAULT '',
                 wafer_type TEXT DEFAULT 'formal',
                 as_beam_ratio TEXT DEFAULT '',
                 qd_islanding_time TEXT DEFAULT '',
@@ -119,6 +131,9 @@ def init_db(db_path: Path | str) -> None:
                 pl_peak_nm TEXT DEFAULT '',
                 pl_fwhm_nm TEXT DEFAULT '',
                 pl_intensity TEXT DEFAULT '',
+                standby_vacuum TEXT DEFAULT '',
+                as_pressure_fill_vacuum TEXT DEFAULT '',
+                as_bulk_temp TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -128,6 +143,7 @@ def init_db(db_path: Path | str) -> None:
                 wafer_id INTEGER NOT NULL,
                 parent_id INTEGER,
                 item_type TEXT NOT NULL CHECK (item_type IN ('layer', 'repeat')),
+                section TEXT DEFAULT 'source',
                 order_index INTEGER NOT NULL DEFAULT 0,
                 layer_name TEXT DEFAULT '',
                 material TEXT DEFAULT '',
@@ -159,6 +175,8 @@ def init_db(db_path: Path | str) -> None:
             """
         )
         ensure_column(conn, "structure_item", "doping_type", "TEXT DEFAULT ''")
+        ensure_column(conn, "structure_item", "section", "TEXT DEFAULT 'source'")
+        ensure_column(conn, "wafer", "sample_holder_code", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "wafer_type", "TEXT DEFAULT 'formal'")
         ensure_column(conn, "wafer", "as_beam_ratio", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_islanding_time", "TEXT DEFAULT ''")
@@ -174,6 +192,9 @@ def init_db(db_path: Path | str) -> None:
         ensure_column(conn, "wafer", "pl_peak_nm", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "pl_fwhm_nm", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "pl_intensity", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "standby_vacuum", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "as_pressure_fill_vacuum", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "as_bulk_temp", "TEXT DEFAULT ''")
         if should_seed_sample:
             seed_sample_data(conn)
 
@@ -259,6 +280,11 @@ def normalize_wafer_type(value: Any) -> str:
     return text if text in WAFER_TYPES else "formal"
 
 
+def normalize_item_section(value: Any) -> str:
+    text = clean_text(value).lower()
+    return text if text in ITEM_SECTIONS else "source"
+
+
 def computed_growth_rate(value: Any) -> str:
     text = clean_text(value)
     if not text:
@@ -294,6 +320,18 @@ def computed_qd_growth_temp(reconstruction_temp: Any, offset: Any, fallback: Any
     return format_compact_number(reconstruction + relative)
 
 
+def prepared_wafer_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {field: clean_text(data.get(field)) for field in WAFER_FIELDS}
+    payload["wafer_type"] = normalize_wafer_type(data.get("wafer_type"))
+    payload["growth_rate"] = computed_growth_rate(data.get("qd_islanding_time"))
+    payload["qd_growth_temp"] = computed_qd_growth_temp(
+        data.get("reconstruction_temp"),
+        data.get("qd_growth_temp_offset"),
+        data.get("qd_growth_temp"),
+    )
+    return payload
+
+
 def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base = dict(existing or {})
     qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
@@ -311,8 +349,14 @@ def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None
         elif field in INT_ITEM_FIELDS:
             base[field] = clean_int(value)
     base["item_type"] = base.get("item_type") if base.get("item_type") in {"layer", "repeat"} else "layer"
-    base["doping"] = normalize_doping(base.get("doping"))
-    base["doping_type"] = normalize_doping_type(base.get("doping_type"))
+    base["section"] = normalize_item_section(base.get("section"))
+    if base["section"] == "as_pressure":
+        base["doping"] = clean_text(base.get("doping"))
+        base["doping_type"] = ""
+        base["is_quantum_dot"] = 0
+    else:
+        base["doping"] = normalize_doping(base.get("doping"))
+        base["doping_type"] = normalize_doping_type(base.get("doping_type"))
     base["periods"] = base.get("periods") or (1 if base["item_type"] == "repeat" else None)
     base["is_quantum_dot"] = 1 if base.get("is_quantum_dot") else 0
     return base
@@ -330,6 +374,7 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
         where_parts.append(
             """(
                 w.wafer_code LIKE ? OR w.structure_name LIKE ? OR w.notes LIKE ?
+                OR COALESCE(w.sample_holder_code, '') LIKE ?
                 OR COALESCE(w.as_beam_ratio, '') LIKE ?
                 OR COALESCE(w.qd_islanding_time, '') LIKE ?
                 OR COALESCE(w.qd_deposition, '') LIKE ?
@@ -344,9 +389,12 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
                 OR COALESCE(w.pl_peak_nm, '') LIKE ?
                 OR COALESCE(w.pl_fwhm_nm, '') LIKE ?
                 OR COALESCE(w.pl_intensity, '') LIKE ?
+                OR COALESCE(w.standby_vacuum, '') LIKE ?
+                OR COALESCE(w.as_pressure_fill_vacuum, '') LIKE ?
+                OR COALESCE(w.as_bulk_temp, '') LIKE ?
             )"""
         )
-        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like])
+        params.extend([like] * 21)
     where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     rows = conn.execute(
         f"""
@@ -390,40 +438,14 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
     now = utc_now()
     code = clean_text(data.get("wafer_code")) or unique_wafer_code(conn, "N-new")
     ensure_unique_wafer_code(conn, code)
+    payload = prepared_wafer_payload({**data, "wafer_code": code})
+    fields = list(WAFER_FIELDS) + ["created_at", "updated_at"]
     conn.execute(
-        """
-        INSERT INTO wafer (
-            wafer_code, size, structure_name, growth_date, notes, wafer_type,
-            as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-            qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        f"""
+        INSERT INTO wafer ({', '.join(fields)})
+        VALUES ({', '.join(['?'] * len(fields))})
         """,
-        (
-            code,
-            clean_text(data.get("size")),
-            clean_text(data.get("structure_name")),
-            clean_text(data.get("growth_date")),
-            clean_text(data.get("notes")),
-            normalize_wafer_type(data.get("wafer_type")),
-            clean_text(data.get("as_beam_ratio")),
-            clean_text(data.get("qd_islanding_time")),
-            clean_text(data.get("qd_deposition")),
-            clean_text(data.get("reconstruction_temp")),
-            clean_text(data.get("qd_growth_temp_offset")),
-            computed_qd_growth_temp(data.get("reconstruction_temp"), data.get("qd_growth_temp_offset"), data.get("qd_growth_temp")),
-            computed_growth_rate(data.get("qd_islanding_time")),
-            clean_text(data.get("qd_density")),
-            clean_text(data.get("qd_volume")),
-            clean_text(data.get("qd_volume_cv")),
-            clean_text(data.get("qd_height")),
-            clean_text(data.get("pl_peak_nm")),
-            clean_text(data.get("pl_fwhm_nm")),
-            clean_text(data.get("pl_intensity")),
-            now,
-            now,
-        ),
+        [payload[field] for field in WAFER_FIELDS] + [now, now],
     )
     wafer_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     return get_wafer(conn, wafer_id)
@@ -532,16 +554,17 @@ def create_item(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -
     conn.execute(
         """
         INSERT INTO structure_item (
-            wafer_id, parent_id, item_type, order_index, layer_name, material,
+            wafer_id, parent_id, item_type, section, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
             doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             wafer_id,
             parent_id,
             item["item_type"],
+            item.get("section", "source"),
             order_index,
             item.get("layer_name", ""),
             item.get("material", ""),
@@ -584,13 +607,14 @@ def update_item(conn: sqlite3.Connection, item_id: int, data: Dict[str, Any]) ->
     conn.execute(
         """
         UPDATE structure_item SET
-            item_type = ?, layer_name = ?, material = ?, thickness_nm = ?,
+            item_type = ?, section = ?, layer_name = ?, material = ?, thickness_nm = ?,
             periods = ?, single_period_thickness_nm = ?, doping = ?,
             doping_type = ?, growth_temp = ?, notes = ?, is_quantum_dot = ?, updated_at = ?
         WHERE id = ?
         """,
         (
             item["item_type"],
+            item.get("section", "source"),
             item.get("layer_name", ""),
             item.get("material", ""),
             item.get("thickness_nm"),
@@ -674,16 +698,17 @@ def insert_tree_from_payload(
     conn.execute(
         """
         INSERT INTO structure_item (
-            wafer_id, parent_id, item_type, order_index, layer_name, material,
+            wafer_id, parent_id, item_type, section, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
             doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             wafer_id,
             parent_id,
             item["item_type"],
+            item.get("section", "source"),
             order_index,
             item.get("layer_name", ""),
             item.get("material", ""),
@@ -729,10 +754,15 @@ def move_item(conn: sqlite3.Connection, item_id: int, direction: str) -> Dict[st
         raise KeyError("item_not_found")
     parent_id = current["parent_id"]
     wafer_id = int(current["wafer_id"])
+    section = normalize_item_section(current.get("section"))
     if parent_id is None:
         siblings = conn.execute(
-            "SELECT id, order_index FROM structure_item WHERE wafer_id = ? AND parent_id IS NULL ORDER BY order_index, id",
-            (wafer_id,),
+            """
+            SELECT id, order_index FROM structure_item
+            WHERE wafer_id = ? AND parent_id IS NULL AND COALESCE(section, 'source') = ?
+            ORDER BY order_index, id
+            """,
+            (wafer_id, section),
         ).fetchall()
     else:
         siblings = conn.execute(
@@ -772,16 +802,17 @@ def clone_item_tree(
     conn.execute(
         """
         INSERT INTO structure_item (
-            wafer_id, parent_id, item_type, order_index, layer_name, material,
+            wafer_id, parent_id, item_type, section, order_index, layer_name, material,
             thickness_nm, periods, single_period_thickness_nm, doping,
             doping_type, growth_temp, notes, is_quantum_dot, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             target_wafer_id,
             target_parent_id,
             source["item_type"],
+            source.get("section", "source"),
             order_index,
             source["layer_name"],
             source["material"],
@@ -851,40 +882,14 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
     else:
         code = unique_wafer_code(conn, f"{source['wafer_code']}-copy")
     now = utc_now()
+    payload = prepared_wafer_payload({**source, "wafer_code": code})
+    fields = list(WAFER_FIELDS) + ["created_at", "updated_at"]
     conn.execute(
-        """
-        INSERT INTO wafer (
-            wafer_code, size, structure_name, growth_date, notes, wafer_type,
-            as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-            qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        f"""
+        INSERT INTO wafer ({', '.join(fields)})
+        VALUES ({', '.join(['?'] * len(fields))})
         """,
-        (
-            code,
-            source["size"],
-            source["structure_name"],
-            source["growth_date"],
-            source["notes"],
-            normalize_wafer_type(source.get("wafer_type")),
-            source.get("as_beam_ratio", ""),
-            source.get("qd_islanding_time", ""),
-            source.get("qd_deposition", ""),
-            source.get("reconstruction_temp", ""),
-            source.get("qd_growth_temp_offset", ""),
-            source.get("qd_growth_temp", ""),
-            source.get("growth_rate", ""),
-            source.get("qd_density", ""),
-            source.get("qd_volume", ""),
-            source.get("qd_volume_cv", ""),
-            source.get("qd_height", ""),
-            source.get("pl_peak_nm", ""),
-            source.get("pl_fwhm_nm", ""),
-            source.get("pl_intensity", ""),
-            now,
-            now,
-        ),
+        [payload[field] for field in WAFER_FIELDS] + [now, now],
     )
     new_wafer_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
     roots = conn.execute(
@@ -937,86 +942,28 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
     if existing and strategy == "rename":
         code = unique_wafer_code(conn, code)
         existing = None
+    payload = prepared_wafer_payload({**wafer_data, "wafer_code": code})
     if existing:
         wafer_id = int(existing["id"])
+        update_fields = [field for field in WAFER_FIELDS if field != "wafer_code"]
         conn.execute(
-            """
+            f"""
             UPDATE wafer SET
-                size = ?, structure_name = ?, growth_date = ?, notes = ?, wafer_type = ?,
-                as_beam_ratio = ?, qd_islanding_time = ?, qd_deposition = ?,
-                reconstruction_temp = ?, qd_growth_temp_offset = ?, qd_growth_temp = ?, growth_rate = ?,
-                qd_density = ?, qd_volume = ?, qd_volume_cv = ?, qd_height = ?,
-                pl_peak_nm = ?, pl_fwhm_nm = ?, pl_intensity = ?, updated_at = ?
+                {', '.join([f'{field} = ?' for field in update_fields])},
+                updated_at = ?
             WHERE id = ?
             """,
-            (
-                clean_text(wafer_data.get("size")),
-                clean_text(wafer_data.get("structure_name")),
-                clean_text(wafer_data.get("growth_date")),
-                clean_text(wafer_data.get("notes")),
-                normalize_wafer_type(wafer_data.get("wafer_type")),
-                clean_text(wafer_data.get("as_beam_ratio")),
-                clean_text(wafer_data.get("qd_islanding_time")),
-                clean_text(wafer_data.get("qd_deposition")),
-                clean_text(wafer_data.get("reconstruction_temp")),
-                clean_text(wafer_data.get("qd_growth_temp_offset")),
-                computed_qd_growth_temp(
-                    wafer_data.get("reconstruction_temp"),
-                    wafer_data.get("qd_growth_temp_offset"),
-                    wafer_data.get("qd_growth_temp"),
-                ),
-                computed_growth_rate(wafer_data.get("qd_islanding_time")),
-                clean_text(wafer_data.get("qd_density")),
-                clean_text(wafer_data.get("qd_volume")),
-                clean_text(wafer_data.get("qd_volume_cv")),
-                clean_text(wafer_data.get("qd_height")),
-                clean_text(wafer_data.get("pl_peak_nm")),
-                clean_text(wafer_data.get("pl_fwhm_nm")),
-                clean_text(wafer_data.get("pl_intensity")),
-                now,
-                wafer_id,
-            ),
+            [payload[field] for field in update_fields] + [now, wafer_id],
         )
         conn.execute("DELETE FROM structure_item WHERE wafer_id = ?", (wafer_id,))
     else:
+        fields = list(WAFER_FIELDS) + ["created_at", "updated_at"]
         conn.execute(
-            """
-            INSERT INTO wafer (
-                wafer_code, size, structure_name, growth_date, notes, wafer_type,
-                as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-                qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-                qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            f"""
+            INSERT INTO wafer ({', '.join(fields)})
+            VALUES ({', '.join(['?'] * len(fields))})
             """,
-            (
-                code,
-                clean_text(wafer_data.get("size")),
-                clean_text(wafer_data.get("structure_name")),
-                clean_text(wafer_data.get("growth_date")),
-                clean_text(wafer_data.get("notes")),
-                normalize_wafer_type(wafer_data.get("wafer_type")),
-                clean_text(wafer_data.get("as_beam_ratio")),
-                clean_text(wafer_data.get("qd_islanding_time")),
-                clean_text(wafer_data.get("qd_deposition")),
-                clean_text(wafer_data.get("reconstruction_temp")),
-                clean_text(wafer_data.get("qd_growth_temp_offset")),
-                computed_qd_growth_temp(
-                    wafer_data.get("reconstruction_temp"),
-                    wafer_data.get("qd_growth_temp_offset"),
-                    wafer_data.get("qd_growth_temp"),
-                ),
-                computed_growth_rate(wafer_data.get("qd_islanding_time")),
-                clean_text(wafer_data.get("qd_density")),
-                clean_text(wafer_data.get("qd_volume")),
-                clean_text(wafer_data.get("qd_volume_cv")),
-                clean_text(wafer_data.get("qd_height")),
-                clean_text(wafer_data.get("pl_peak_nm")),
-                clean_text(wafer_data.get("pl_fwhm_nm")),
-                clean_text(wafer_data.get("pl_intensity")),
-                now,
-                now,
-            ),
+            [payload[field] for field in WAFER_FIELDS] + [now, now],
         )
         wafer_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
@@ -1037,6 +984,8 @@ def json_item_roots(items: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return sorted(roots or item_list, key=lambda item: (clean_int(item.get("order_index")) or 0, clean_int(item.get("id")) or 0))
 
     by_id = {clean_int(item.get("id")): item for item in item_list if clean_int(item.get("id")) is not None}
+    if not by_id:
+        return sorted(item_list, key=lambda item: clean_int(item.get("order_index")) or 0)
     children: Dict[Optional[int], List[Dict[str, Any]]] = {}
     for item in item_list:
         parent_id = clean_int(item.get("parent_id"))
