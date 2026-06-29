@@ -36,9 +36,15 @@
 
       <main class="editor">
         <section class="wafer-header">
-          <label>
+          <label class="code-field">
             <span id="codeFieldLabel">片号</span>
-            <input data-wafer-field="wafer_code" id="waferCode" />
+            <div class="code-input-row">
+              <input data-wafer-field="wafer_code" id="waferCode" />
+              <div class="machine-record-toggle" id="machineRecordTypeToggle" hidden>
+                <button type="button" data-machine-record-type="open_chamber">开腔</button>
+                <button type="button" data-machine-record-type="speed_test">测速</button>
+              </div>
+            </div>
           </label>
           <label>
             <span>尺寸</span>
@@ -58,7 +64,7 @@
           </label>
           <label class="wide notes">
             <span>备注</span>
-            <input data-wafer-field="notes" id="waferNotes" />
+            <textarea data-wafer-field="notes" id="waferNotes"></textarea>
           </label>
         </section>
 
@@ -152,7 +158,7 @@
           <span id="statusText" class="status-text"></span>
         </section>
 
-        <section class="table-wrap">
+        <section class="table-wrap" id="primaryTableSection">
           <div class="table-section-title" id="primaryTableTitle">层结构</div>
           <table class="layer-table">
             <thead>

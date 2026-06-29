@@ -33,6 +33,7 @@ FLOAT_ITEM_FIELDS = {"thickness_nm", "single_period_thickness_nm"}
 INT_ITEM_FIELDS = {"parent_id", "order_index", "periods", "is_quantum_dot"}
 ITEM_SECTIONS = {"source", "as_pressure"}
 WAFER_TYPES = {"formal", "test", "machine"}
+MACHINE_RECORD_TYPES = {"", "open_chamber", "speed_test"}
 WAFER_FIELDS = (
     "wafer_code",
     "size",
@@ -41,6 +42,7 @@ WAFER_FIELDS = (
     "notes",
     "sample_holder_code",
     "wafer_type",
+    "machine_record_type",
     "as_beam_ratio",
     "qd_islanding_time",
     "qd_deposition",
@@ -76,6 +78,7 @@ TEST_WAFER_FIELDS = (
     "pl_intensity",
 )
 MACHINE_WAFER_FIELDS = (
+    "machine_record_type",
     "standby_vacuum",
     "as_pressure_fill_vacuum",
     "as_bulk_temp",
@@ -117,6 +120,7 @@ def init_db(db_path: Path | str) -> None:
                 notes TEXT DEFAULT '',
                 sample_holder_code TEXT DEFAULT '',
                 wafer_type TEXT DEFAULT 'formal',
+                machine_record_type TEXT DEFAULT '',
                 as_beam_ratio TEXT DEFAULT '',
                 qd_islanding_time TEXT DEFAULT '',
                 qd_deposition TEXT DEFAULT '',
@@ -178,6 +182,7 @@ def init_db(db_path: Path | str) -> None:
         ensure_column(conn, "structure_item", "section", "TEXT DEFAULT 'source'")
         ensure_column(conn, "wafer", "sample_holder_code", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "wafer_type", "TEXT DEFAULT 'formal'")
+        ensure_column(conn, "wafer", "machine_record_type", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "as_beam_ratio", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_islanding_time", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_deposition", "TEXT DEFAULT ''")
@@ -280,6 +285,15 @@ def normalize_wafer_type(value: Any) -> str:
     return text if text in WAFER_TYPES else "formal"
 
 
+def normalize_machine_record_type(value: Any) -> str:
+    text = clean_text(value).lower()
+    if text == "开腔":
+        return "open_chamber"
+    if text == "测速":
+        return "speed_test"
+    return text if text in MACHINE_RECORD_TYPES else ""
+
+
 def normalize_item_section(value: Any) -> str:
     text = clean_text(value).lower()
     return text if text in ITEM_SECTIONS else "source"
@@ -323,6 +337,7 @@ def computed_qd_growth_temp(reconstruction_temp: Any, offset: Any, fallback: Any
 def prepared_wafer_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     payload = {field: clean_text(data.get(field)) for field in WAFER_FIELDS}
     payload["wafer_type"] = normalize_wafer_type(data.get("wafer_type"))
+    payload["machine_record_type"] = normalize_machine_record_type(data.get("machine_record_type"))
     payload["growth_rate"] = computed_growth_rate(data.get("qd_islanding_time"))
     payload["qd_growth_temp"] = computed_qd_growth_temp(
         data.get("reconstruction_temp"),
@@ -332,7 +347,11 @@ def prepared_wafer_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
-def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def normalize_item_payload(
+    data: Dict[str, Any],
+    existing: Dict[str, Any] | None = None,
+    machine_record: bool = False,
+) -> Dict[str, Any]:
     base = dict(existing or {})
     qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
     for field in ITEM_FIELDS:
@@ -350,7 +369,11 @@ def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None
             base[field] = clean_int(value)
     base["item_type"] = base.get("item_type") if base.get("item_type") in {"layer", "repeat"} else "layer"
     base["section"] = normalize_item_section(base.get("section"))
-    if base["section"] == "as_pressure":
+    if machine_record:
+        base["doping"] = clean_text(base.get("doping"))
+        base["doping_type"] = ""
+        base["is_quantum_dot"] = 0
+    elif base["section"] == "as_pressure":
         base["doping"] = clean_text(base.get("doping"))
         base["doping_type"] = ""
         base["is_quantum_dot"] = 0
@@ -360,6 +383,11 @@ def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None
     base["periods"] = base.get("periods") or (1 if base["item_type"] == "repeat" else None)
     base["is_quantum_dot"] = 1 if base.get("is_quantum_dot") else 0
     return base
+
+
+def is_machine_wafer(conn: sqlite3.Connection, wafer_id: int) -> bool:
+    row = conn.execute("SELECT wafer_type FROM wafer WHERE id = ?", (wafer_id,)).fetchone()
+    return normalize_wafer_type(row["wafer_type"] if row else "") == "machine"
 
 
 def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = "") -> List[Dict[str, Any]]:
@@ -374,6 +402,7 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
         where_parts.append(
             """(
                 w.wafer_code LIKE ? OR w.structure_name LIKE ? OR w.notes LIKE ?
+                OR COALESCE(w.machine_record_type, '') LIKE ?
                 OR COALESCE(w.sample_holder_code, '') LIKE ?
                 OR COALESCE(w.as_beam_ratio, '') LIKE ?
                 OR COALESCE(w.qd_islanding_time, '') LIKE ?
@@ -394,7 +423,7 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
                 OR COALESCE(w.as_bulk_temp, '') LIKE ?
             )"""
         )
-        params.extend([like] * 21)
+        params.extend([like] * 22)
     where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     rows = conn.execute(
         f"""
@@ -464,7 +493,12 @@ def update_wafer(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) 
     params: List[Any] = []
     for field in WAFER_FIELDS:
         if field in data:
-            value = normalize_wafer_type(data.get(field)) if field == "wafer_type" else clean_text(data.get(field))
+            if field == "wafer_type":
+                value = normalize_wafer_type(data.get(field))
+            elif field == "machine_record_type":
+                value = normalize_machine_record_type(data.get(field))
+            else:
+                value = clean_text(data.get(field))
             if field == "wafer_code":
                 ensure_unique_wafer_code(conn, value, wafer_id)
             updates.append(f"{field} = ?")
@@ -549,7 +583,7 @@ def create_item(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -
     if order_index is None:
         order_index = next_order(conn, wafer_id, parent_id)
 
-    item = normalize_item_payload(data)
+    item = normalize_item_payload(data, machine_record=is_machine_wafer(conn, wafer_id))
     now = utc_now()
     conn.execute(
         """
@@ -602,7 +636,7 @@ def update_item(conn: sqlite3.Connection, item_id: int, data: Dict[str, Any]) ->
     current = row_to_dict(conn.execute("SELECT * FROM structure_item WHERE id = ?", (item_id,)).fetchone())
     if not current:
         raise KeyError("item_not_found")
-    item = normalize_item_payload(data, current)
+    item = normalize_item_payload(data, current, is_machine_wafer(conn, int(current["wafer_id"])))
     now = utc_now()
     conn.execute(
         """
@@ -693,7 +727,7 @@ def insert_tree_from_payload(
     order_index: int,
     id_map: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Any]:
-    item = normalize_item_payload(payload)
+    item = normalize_item_payload(payload, machine_record=is_machine_wafer(conn, wafer_id))
     now = utc_now()
     conn.execute(
         """

@@ -52,12 +52,17 @@ const TEST_WAFER_FIELDS = [
   "pl_intensity"
 ];
 const MACHINE_WAFER_FIELDS = [
+  "machine_record_type",
   "standby_vacuum",
   "as_pressure_fill_vacuum",
   "as_bulk_temp"
 ];
 const DEFAULT_SECTION = "source";
 const AS_PRESSURE_SECTION = "as_pressure";
+const MACHINE_RECORD_TYPES = {
+  open_chamber: "开腔",
+  speed_test: "测速"
+};
 const STANDARD_TABLE_HEADERS = [
   ["", "actions-col"],
   ["状态"],
@@ -77,6 +82,14 @@ const SOURCE_TABLE_HEADERS = [
   ["源炉"],
   ["束流 Torr"],
   ["温度"],
+  ["备注"]
+];
+const SOURCE_SPEED_TEST_TABLE_HEADERS = [
+  ["", "actions-col"],
+  ["源炉"],
+  ["束流 Torr"],
+  ["温度"],
+  ["测速"],
   ["备注"]
 ];
 const AS_PRESSURE_TABLE_HEADERS = [
@@ -109,9 +122,11 @@ function bindElements() {
   els.waferTypeTabs = document.getElementById("waferTypeTabs");
   els.waferList = document.getElementById("waferList");
   els.codeFieldLabel = document.getElementById("codeFieldLabel");
+  els.machineRecordTypeToggle = document.getElementById("machineRecordTypeToggle");
   els.sampleHolderField = document.getElementById("sampleHolderField");
   els.testWaferFields = document.getElementById("testWaferFields");
   els.machineFields = document.getElementById("machineFields");
+  els.primaryTableSection = document.getElementById("primaryTableSection");
   els.layerTableBody = document.getElementById("layerTableBody");
   els.layerTableHead = document.getElementById("layerTableHead");
   els.primaryTableTitle = document.getElementById("primaryTableTitle");
@@ -123,6 +138,7 @@ function bindElements() {
   els.statsContent = document.getElementById("statsContent");
   els.totalThickness = document.getElementById("totalThickness");
   els.statusText = document.getElementById("statusText");
+  els.toolbar = document.querySelector(".toolbar");
   els.shortcutsSection = document.querySelector(".shortcuts");
   els.shortcutList = document.getElementById("shortcutList");
   els.undoDeleteBtn = document.getElementById("undoDeleteBtn");
@@ -161,6 +177,7 @@ function bindElements() {
 function bindEvents() {
   document.getElementById("newWaferBtn").addEventListener("click", createNewWafer);
   els.waferTypeTabs.addEventListener("click", handleWaferTypeClick);
+  els.machineRecordTypeToggle.addEventListener("click", handleMachineRecordTypeClick);
   document.getElementById("importJsonBtn").addEventListener("click", () => els.jsonImportInput.click());
   document.getElementById("backupExportBtn").addEventListener("click", exportGlobalBackup);
   els.deleteSelectedWafersBtn.addEventListener("click", () => deleteSelectedWafers().catch(showError));
@@ -261,6 +278,37 @@ function renderWaferTypeTabs() {
   }
 }
 
+function renderMachineRecordTypeToggle(value) {
+  const current = normalizeMachineRecordType(value);
+  els.machineRecordTypeToggle.querySelectorAll("[data-machine-record-type]").forEach((button) => {
+    button.classList.toggle("active", normalizeMachineRecordType(button.dataset.machineRecordType) === current);
+  });
+}
+
+async function handleMachineRecordTypeClick(event) {
+  const button = event.target.closest("[data-machine-record-type]");
+  if (!button || !state.current || !isMachineRecord()) return;
+  const requested = normalizeMachineRecordType(button.dataset.machineRecordType);
+  if (!requested) return;
+  const waferId = state.current.id;
+  const current = normalizeMachineRecordType(state.current.machine_record_type);
+  const next = current === requested ? "" : requested;
+  state.current.machine_record_type = next;
+  state.current.wafer_code = codeWithMachineRecordSuffix(state.current.wafer_code || currentShortDateCode(), next);
+  els.waferFields.wafer_code.value = state.current.wafer_code;
+  clearTimeout(state.waferSaveTimer);
+  try {
+    await saveCurrentWafer(waferId);
+    showStatus(next ? `已标记为${machineRecordTypeLabel(next)}` : "已切回日常记录");
+    await loadWafers(waferId);
+  } catch (error) {
+    showError(error);
+    if (isDuplicateWaferError(error)) {
+      await loadWafer(waferId);
+    }
+  }
+}
+
 async function loadWafer(id) {
   const payload = await api(`/api/wafers/${id}`);
   state.current = payload.wafer;
@@ -305,11 +353,12 @@ function waferCardMeta(wafer) {
   const type = normalizeWaferType(wafer.wafer_type);
   if (type === "machine") {
     const fields = [
+      ["类型", machineRecordTypeLabel(wafer.machine_record_type)],
       ["待机", wafer.standby_vacuum],
       ["As充盈", wafer.as_pressure_fill_vacuum],
       ["As bulk", wafer.as_bulk_temp]
     ]
-      .filter(([, value]) => String(value || "").trim())
+      .filter(([, value]) => String(value || "").trim() && value !== "日常")
       .map(([label, value]) => `${label} ${value}`);
     return fields.length ? fields.join(" · ") : "MBE 参数";
   }
@@ -340,6 +389,9 @@ function renderCurrent() {
   const waferType = normalizeWaferType(wafer?.wafer_type || state.waferType);
   const testWafer = waferType === "test";
   const machineRecord = waferType === "machine";
+  const machineRecordType = normalizeMachineRecordType(wafer?.machine_record_type);
+  const openChamberRecord = machineRecord && machineRecordType === "open_chamber";
+  const speedTestRecord = machineRecord && machineRecordType === "speed_test";
   if (wafer) {
     wafer.growth_rate = computedGrowthRate(wafer.qd_islanding_time);
     wafer.qd_growth_temp = computedQdGrowthTemp(
@@ -350,21 +402,29 @@ function renderCurrent() {
   }
   els.codeFieldLabel.textContent = machineRecord ? "日期编号" : "片号";
   els.appShell.classList.toggle("machine-mode", machineRecord);
+  els.appShell.classList.toggle("machine-open-mode", openChamberRecord);
+  els.appShell.classList.toggle("machine-speed-mode", speedTestRecord);
   els.inspector.hidden = machineRecord;
+  els.machineRecordTypeToggle.hidden = !machineRecord || !wafer;
+  renderMachineRecordTypeToggle(machineRecordType);
   ["size", "structure_name", "growth_date", "sample_holder_code"].forEach((field) => {
     const label = els.waferFields[field]?.closest?.("label");
     if (label) label.hidden = machineRecord;
   });
   els.sampleHolderField.hidden = machineRecord;
   els.testWaferFields.hidden = !testWafer;
-  els.machineFields.hidden = !machineRecord;
-  els.asPressureSection.hidden = !machineRecord;
+  els.machineFields.hidden = !machineRecord || openChamberRecord;
+  els.primaryTableSection.hidden = openChamberRecord;
+  els.asPressureSection.hidden = !machineRecord || openChamberRecord;
+  els.toolbar.hidden = openChamberRecord;
   els.shortcutsSection.hidden = machineRecord;
   els.addLayerBtn.textContent = machineRecord ? "+ 源炉" : "+ 层";
   els.addInnerLayerBtn.textContent = machineRecord ? "+ 子项" : "+ 子层";
-  els.addAsPressureBtn.hidden = !machineRecord;
-  els.primaryTableTitle.textContent = machineRecord ? "源炉束流 / 温度" : "层结构";
-  renderTableHeads(machineRecord);
+  els.addAsPressureBtn.hidden = !machineRecord || openChamberRecord;
+  els.primaryTableTitle.textContent = machineRecord
+    ? (speedTestRecord ? "源炉束流 / 温度 / 测速" : "源炉束流 / 温度")
+    : "层结构";
+  renderTableHeads(machineRecord, speedTestRecord);
   Object.entries(els.waferFields).forEach(([field, input]) => {
     input.value = wafer?.[field] || "";
     input.disabled = !wafer;
@@ -413,17 +473,19 @@ function renderMachineItems() {
   const map = childMap();
   const sourceRows = flattenItems(null, 0, map, DEFAULT_SECTION);
   const asRows = flattenItems(null, 0, map, AS_PRESSURE_SECTION);
+  const sourceColspan = isMachineSpeedTestRecord() ? 6 : 5;
   els.layerTableBody.innerHTML = sourceRows.length
     ? sourceRows.map(({ item, depth }) => renderMachineItemRow(item, depth, map, DEFAULT_SECTION)).join("")
-    : `<tr><td colspan="5" class="wafer-meta">暂无源炉参数</td></tr>`;
+    : `<tr><td colspan="${sourceColspan}" class="wafer-meta">暂无源炉参数</td></tr>`;
   els.asPressureTableBody.innerHTML = asRows.length
     ? asRows.map(({ item, depth }) => renderMachineItemRow(item, depth, map, AS_PRESSURE_SECTION)).join("")
     : `<tr><td colspan="7" class="wafer-meta">暂无 As 压参数</td></tr>`;
   scheduleRowAnimationClear();
 }
 
-function renderTableHeads(machineRecord) {
-  renderTableHead(els.layerTableHead, machineRecord ? SOURCE_TABLE_HEADERS : STANDARD_TABLE_HEADERS);
+function renderTableHeads(machineRecord, speedTestRecord = false) {
+  const sourceHeaders = speedTestRecord ? SOURCE_SPEED_TEST_TABLE_HEADERS : SOURCE_TABLE_HEADERS;
+  renderTableHead(els.layerTableHead, machineRecord ? sourceHeaders : STANDARD_TABLE_HEADERS);
   renderTableHead(els.asPressureTableHead, AS_PRESSURE_TABLE_HEADERS);
 }
 
@@ -507,6 +569,7 @@ function renderMachineItemRow(item, depth, map, section) {
   const rowClass = repeat ? "repeat-row" : child;
   const depthClass = depth > 0 ? "nested-row" : "root-row";
   const animationClass = rowAnimationClass(item);
+  const speedTestRecord = isMachineSpeedTestRecord();
   const levelOffset = depth * 32;
   const railOffset = Math.max(0, levelOffset - 16);
   const actionCell = `
@@ -540,6 +603,7 @@ function renderMachineItemRow(item, depth, map, section) {
       <td class="layer-name-cell"><div class="indent-cell"><input data-field="layer_name" value="${escapeAttr(item.layer_name)}" placeholder="源炉" /></div></td>
       <td><input data-field="thickness_nm" value="${escapeAttr(blankNumber(item.thickness_nm))}" placeholder="如 2e-7" /></td>
       <td><input data-field="growth_temp" value="${escapeAttr(item.growth_temp)}" placeholder="温度" /></td>
+      ${speedTestRecord ? `<td><input data-field="doping" value="${escapeAttr(item.doping)}" placeholder="测速" /></td>` : ""}
       <td><input data-field="notes" value="${escapeAttr(item.notes)}" /></td>
     </tr>
   `;
@@ -841,10 +905,7 @@ function handleWaferInput(event) {
   clearTimeout(state.waferSaveTimer);
   state.waferSaveTimer = setTimeout(async () => {
     try {
-      await api(`/api/wafers/${waferId}`, {
-        method: "PUT",
-        body: JSON.stringify(pickWaferFields(state.current))
-      });
+      await saveCurrentWafer(waferId);
       showStatus("已保存");
       await loadWafers(waferId);
     } catch (error) {
@@ -854,6 +915,13 @@ function handleWaferInput(event) {
       }
     }
   }, 350);
+}
+
+async function saveCurrentWafer(waferId) {
+  return api(`/api/wafers/${waferId}`, {
+    method: "PUT",
+    body: JSON.stringify(pickWaferFields(state.current))
+  });
 }
 
 function scheduleItemSave(item) {
@@ -1409,6 +1477,7 @@ function csvForWafers(wafers) {
   const rows = [[
     "wafer_code",
     "wafer_type",
+    "machine_record_type",
     "size",
     "structure_name",
     "growth_date",
@@ -1483,6 +1552,7 @@ function waferCsvPrefix(wafer) {
   return [
     wafer.wafer_code,
     normalizeWaferType(wafer.wafer_type),
+    normalizeMachineRecordType(wafer.machine_record_type),
     wafer.size,
     wafer.structure_name,
     wafer.growth_date,
@@ -1516,14 +1586,14 @@ function csvCell(value) {
 function buildAllRecordsXlsx(wafers) {
   const allRows = [
     [
-      "编号", "类型", "尺寸", "结构名称", "日期", "样品托编号", "备注",
+      "编号", "类型", "MBE记录类型", "尺寸", "结构名称", "日期", "样品托编号", "备注",
       "As 压束流比", "QD 成岛时间(s)", "生长速率(ML/S)", "QD 淀积量", "再构温度(°C)",
       "QD 生长相对温度(°C)", "QD 生长实际温度(°C)", "QD 密度(cm-2)", "QD 体积中位数(nm3)",
       "QD 高度(nm)", "QD 体积CV", "PL峰位(nm)", "FWHM(nm)", "PL强度",
       "待机真空度", "As压充盈真空度", "As bulk温度"
     ],
     ...wafers.map((wafer) => [
-      wafer.wafer_code, normalizeWaferType(wafer.wafer_type), wafer.size, wafer.structure_name, wafer.growth_date,
+      wafer.wafer_code, normalizeWaferType(wafer.wafer_type), machineRecordTypeLabel(wafer.machine_record_type), wafer.size, wafer.structure_name, wafer.growth_date,
       wafer.sample_holder_code, wafer.notes, wafer.as_beam_ratio, wafer.qd_islanding_time,
       computedGrowthRate(wafer.qd_islanding_time), wafer.qd_deposition, wafer.reconstruction_temp,
       wafer.qd_growth_temp_offset, computedQdGrowthTemp(wafer.reconstruction_temp, wafer.qd_growth_temp_offset, wafer.qd_growth_temp),
@@ -1533,7 +1603,7 @@ function buildAllRecordsXlsx(wafers) {
   ];
   const itemRows = [[
     "编号", "类型", "路径", "区块", "行类型", "层名/源炉/As压", "材料/生长材料", "厚度/束流",
-    "周期/组", "单周期", "掺杂/Value", "N/P", "温度/生长速率", "QD", "备注"
+    "周期/组", "单周期", "掺杂/Value/测速", "N/P", "温度/生长速率", "QD", "备注"
   ]];
   wafers.forEach((wafer) => {
     const map = childMapForItems(wafer.items || []);
@@ -1574,7 +1644,7 @@ function writeXlsxItemRows(rows, wafer, map, parentId, prefix) {
 function machineRows(wafers, section) {
   const header = section === AS_PRESSURE_SECTION
     ? ["日期编号", "路径", "As压名称", "生长材料", "束流(Torr)", "Value", "生长速率(um/h)", "备注"]
-    : ["日期编号", "路径", "源炉", "材料", "束流(Torr)", "温度", "备注"];
+    : ["日期编号", "路径", "源炉", "束流(Torr)", "温度", "测速", "备注"];
   const rows = [header];
   wafers
     .filter((wafer) => normalizeWaferType(wafer.wafer_type) === "machine")
@@ -1593,7 +1663,7 @@ function appendMachineRows(rows, wafer, map, parentId, prefix, section) {
       if (section === AS_PRESSURE_SECTION) {
         rows.push([wafer.wafer_code, path, item.layer_name, item.material, blankNumber(item.thickness_nm), item.doping, item.growth_temp, item.notes]);
       } else {
-        rows.push([wafer.wafer_code, path, item.layer_name, item.material, blankNumber(item.thickness_nm), item.growth_temp, item.notes]);
+        rows.push([wafer.wafer_code, path, item.layer_name, blankNumber(item.thickness_nm), item.growth_temp, item.doping, item.notes]);
       }
       appendMachineRows(rows, wafer, map, item.id, path, section);
     });
@@ -2922,6 +2992,31 @@ function normalizeWaferType(value) {
   return ["formal", "test", "machine"].includes(text) ? text : "formal";
 }
 
+function normalizeMachineRecordType(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "开腔") return "open_chamber";
+  if (text === "测速") return "speed_test";
+  return Object.prototype.hasOwnProperty.call(MACHINE_RECORD_TYPES, text) ? text : "";
+}
+
+function machineRecordTypeLabel(value) {
+  return MACHINE_RECORD_TYPES[normalizeMachineRecordType(value)] || "日常";
+}
+
+function isMachineSpeedTestRecord() {
+  return isMachineRecord() && normalizeMachineRecordType(state.current?.machine_record_type) === "speed_test";
+}
+
+function stripMachineRecordSuffix(value) {
+  return String(value || "").trim().replace(/(?:开腔|测速)$/u, "").trim();
+}
+
+function codeWithMachineRecordSuffix(value, recordType) {
+  const base = stripMachineRecordSuffix(value) || currentShortDateCode();
+  const suffix = MACHINE_RECORD_TYPES[normalizeMachineRecordType(recordType)] || "";
+  return `${base}${suffix}`;
+}
+
 function normalizeItemSection(value) {
   const text = String(value || "").trim().toLowerCase();
   return text === AS_PRESSURE_SECTION ? AS_PRESSURE_SECTION : DEFAULT_SECTION;
@@ -3241,14 +3336,19 @@ function pickWaferFields(wafer) {
     wafer.qd_growth_temp_offset,
     wafer.qd_growth_temp
   );
+  const waferType = normalizeWaferType(wafer.wafer_type);
+  const machineRecordType = normalizeMachineRecordType(wafer.machine_record_type);
   const payload = {
-    wafer_code: wafer.wafer_code,
+    wafer_code: waferType === "machine"
+      ? codeWithMachineRecordSuffix(wafer.wafer_code, machineRecordType)
+      : wafer.wafer_code,
     size: wafer.size,
     structure_name: wafer.structure_name,
     growth_date: wafer.growth_date,
     notes: wafer.notes,
     sample_holder_code: wafer.sample_holder_code,
-    wafer_type: normalizeWaferType(wafer.wafer_type),
+    wafer_type: waferType,
+    machine_record_type: machineRecordType,
     growth_rate: growthRate,
     qd_growth_temp: qdGrowthTemp
   };
@@ -3258,7 +3358,9 @@ function pickWaferFields(wafer) {
     }
   });
   MACHINE_WAFER_FIELDS.forEach((field) => {
-    payload[field] = wafer[field] || "";
+    if (field !== "machine_record_type") {
+      payload[field] = wafer[field] || "";
+    }
   });
   return payload;
 }

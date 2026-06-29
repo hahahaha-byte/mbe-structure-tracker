@@ -73,7 +73,8 @@ button:disabled {
 }
 
 input,
-select {
+select,
+textarea {
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--line);
@@ -83,8 +84,14 @@ select {
   padding: 7px 9px;
 }
 
+textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   outline: 2px solid var(--accent-soft);
   border-color: var(--accent);
 }
@@ -313,8 +320,43 @@ input[readonly] {
   min-width: 0;
 }
 
+.code-field {
+  grid-column: span 2;
+}
+
+.code-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.machine-record-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.machine-record-toggle button {
+  min-width: 54px;
+  white-space: nowrap;
+}
+
+.machine-record-toggle button.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
 .wafer-header .notes {
   grid-column: 1 / -1;
+}
+
+.wafer-header .notes textarea {
+  min-height: 40px;
+}
+
+.app-shell.machine-open-mode .wafer-header .notes textarea {
+  min-height: 340px;
 }
 
 .test-wafer-fields {
@@ -383,6 +425,10 @@ input[readonly] {
 .machine-as-section .layer-table,
 body:has(#machineFields:not([hidden])) .table-wrap:first-of-type .layer-table {
   min-width: 940px;
+}
+
+.app-shell.machine-speed-mode .table-wrap:first-of-type .layer-table {
+  min-width: 1040px;
 }
 
 .machine-summary {

@@ -267,6 +267,7 @@ def export_csv(conn: Any, wafer_id: Optional[int] = None) -> str:
         [
             "wafer_code",
             "wafer_type",
+            "machine_record_type",
             "size",
             "structure_name",
             "growth_date",
@@ -356,6 +357,7 @@ def wafer_csv_prefix(wafer: Dict[str, Any]) -> list[Any]:
     return [
         wafer["wafer_code"],
         wafer.get("wafer_type", "formal"),
+        wafer.get("machine_record_type", ""),
         wafer["size"],
         wafer["structure_name"],
         wafer.get("growth_date", ""),
