@@ -73,12 +73,15 @@
             <input data-wafer-field="qd_deposition" id="qdDeposition" />
           </label>
           <label>
-            <span>再构转变温度（°C）</span>
+            <span>再构温度（°C）</span>
             <input data-wafer-field="reconstruction_temp" id="reconstructionTemp" />
           </label>
-          <label>
-            <span>QD 生长温度（°C）</span>
-            <input data-wafer-field="qd_growth_temp" id="qdGrowthTemp" />
+          <label class="paired-field">
+            <span>QD 生长温度：相对 / 实际（°C）</span>
+            <div class="paired-inputs">
+              <input data-wafer-field="qd_growth_temp_offset" id="qdGrowthTempOffset" placeholder="相对，如 -30" />
+              <input data-wafer-field="qd_growth_temp" id="qdGrowthTemp" placeholder="实际温度" />
+            </div>
           </label>
           <label>
             <span>QD 密度（cm<sup>-2</sup>）</span>
@@ -95,6 +98,18 @@
           <label>
             <span>QD 体积 CV</span>
             <input data-wafer-field="qd_volume_cv" id="qdVolumeCv" />
+          </label>
+          <label>
+            <span>PL 峰位（nm）</span>
+            <input data-wafer-field="pl_peak_nm" id="plPeakNm" />
+          </label>
+          <label>
+            <span>FWHM（nm）</span>
+            <input data-wafer-field="pl_fwhm_nm" id="plFwhmNm" />
+          </label>
+          <label>
+            <span>PL 强度</span>
+            <input data-wafer-field="pl_intensity" id="plIntensity" />
           </label>
         </section>
 

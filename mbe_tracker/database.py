@@ -42,24 +42,32 @@ WAFER_FIELDS = (
     "qd_islanding_time",
     "qd_deposition",
     "reconstruction_temp",
+    "qd_growth_temp_offset",
     "qd_growth_temp",
     "growth_rate",
     "qd_density",
     "qd_volume",
     "qd_volume_cv",
     "qd_height",
+    "pl_peak_nm",
+    "pl_fwhm_nm",
+    "pl_intensity",
 )
 TEST_WAFER_FIELDS = (
     "as_beam_ratio",
     "qd_islanding_time",
     "qd_deposition",
     "reconstruction_temp",
+    "qd_growth_temp_offset",
     "qd_growth_temp",
     "growth_rate",
     "qd_density",
     "qd_volume",
     "qd_volume_cv",
     "qd_height",
+    "pl_peak_nm",
+    "pl_fwhm_nm",
+    "pl_intensity",
 )
 
 
@@ -101,12 +109,16 @@ def init_db(db_path: Path | str) -> None:
                 qd_islanding_time TEXT DEFAULT '',
                 qd_deposition TEXT DEFAULT '',
                 reconstruction_temp TEXT DEFAULT '',
+                qd_growth_temp_offset TEXT DEFAULT '',
                 qd_growth_temp TEXT DEFAULT '',
                 growth_rate TEXT DEFAULT '',
                 qd_density TEXT DEFAULT '',
                 qd_volume TEXT DEFAULT '',
                 qd_volume_cv TEXT DEFAULT '',
                 qd_height TEXT DEFAULT '',
+                pl_peak_nm TEXT DEFAULT '',
+                pl_fwhm_nm TEXT DEFAULT '',
+                pl_intensity TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -152,12 +164,16 @@ def init_db(db_path: Path | str) -> None:
         ensure_column(conn, "wafer", "qd_islanding_time", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_deposition", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "reconstruction_temp", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "qd_growth_temp_offset", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_growth_temp", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "growth_rate", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_density", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_volume", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_volume_cv", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_height", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "pl_peak_nm", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "pl_fwhm_nm", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "pl_intensity", "TEXT DEFAULT ''")
         if should_seed_sample:
             seed_sample_data(conn)
 
@@ -256,6 +272,28 @@ def computed_growth_rate(value: Any) -> str:
     return f"{1.7 / seconds:.3f}"
 
 
+def first_number(value: Any) -> Optional[float]:
+    text = clean_text(value)
+    if not text:
+        return None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return clean_float(match.group(0)) if match else None
+
+
+def format_compact_number(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def computed_qd_growth_temp(reconstruction_temp: Any, offset: Any, fallback: Any = "") -> str:
+    reconstruction = first_number(reconstruction_temp)
+    relative = first_number(offset)
+    if reconstruction is None or relative is None:
+        return clean_text(fallback)
+    return format_compact_number(reconstruction + relative)
+
+
 def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base = dict(existing or {})
     qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
@@ -296,15 +334,19 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
                 OR COALESCE(w.qd_islanding_time, '') LIKE ?
                 OR COALESCE(w.qd_deposition, '') LIKE ?
                 OR COALESCE(w.reconstruction_temp, '') LIKE ?
+                OR COALESCE(w.qd_growth_temp_offset, '') LIKE ?
                 OR COALESCE(w.qd_growth_temp, '') LIKE ?
                 OR COALESCE(w.growth_rate, '') LIKE ?
                 OR COALESCE(w.qd_density, '') LIKE ?
                 OR COALESCE(w.qd_volume, '') LIKE ?
                 OR COALESCE(w.qd_volume_cv, '') LIKE ?
                 OR COALESCE(w.qd_height, '') LIKE ?
+                OR COALESCE(w.pl_peak_nm, '') LIKE ?
+                OR COALESCE(w.pl_fwhm_nm, '') LIKE ?
+                OR COALESCE(w.pl_intensity, '') LIKE ?
             )"""
         )
-        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, like])
     where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     rows = conn.execute(
         f"""
@@ -353,10 +395,10 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
         INSERT INTO wafer (
             wafer_code, size, structure_name, growth_date, notes, wafer_type,
             as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-            qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            qd_height, created_at, updated_at
+            qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
+            qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
@@ -369,12 +411,16 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
             clean_text(data.get("qd_islanding_time")),
             clean_text(data.get("qd_deposition")),
             clean_text(data.get("reconstruction_temp")),
-            clean_text(data.get("qd_growth_temp")),
+            clean_text(data.get("qd_growth_temp_offset")),
+            computed_qd_growth_temp(data.get("reconstruction_temp"), data.get("qd_growth_temp_offset"), data.get("qd_growth_temp")),
             computed_growth_rate(data.get("qd_islanding_time")),
             clean_text(data.get("qd_density")),
             clean_text(data.get("qd_volume")),
             clean_text(data.get("qd_volume_cv")),
             clean_text(data.get("qd_height")),
+            clean_text(data.get("pl_peak_nm")),
+            clean_text(data.get("pl_fwhm_nm")),
+            clean_text(data.get("pl_intensity")),
             now,
             now,
         ),
@@ -386,6 +432,12 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
 def update_wafer(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     if "qd_islanding_time" in data:
         data = {**data, "growth_rate": computed_growth_rate(data.get("qd_islanding_time"))}
+    if "reconstruction_temp" in data or "qd_growth_temp_offset" in data:
+        current = row_to_dict(conn.execute("SELECT * FROM wafer WHERE id = ?", (wafer_id,)).fetchone()) or {}
+        reconstruction_temp = data.get("reconstruction_temp", current.get("reconstruction_temp"))
+        offset = data.get("qd_growth_temp_offset", current.get("qd_growth_temp_offset"))
+        fallback = data.get("qd_growth_temp", current.get("qd_growth_temp"))
+        data = {**data, "qd_growth_temp": computed_qd_growth_temp(reconstruction_temp, offset, fallback)}
     updates = []
     params: List[Any] = []
     for field in WAFER_FIELDS:
@@ -804,10 +856,10 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
         INSERT INTO wafer (
             wafer_code, size, structure_name, growth_date, notes, wafer_type,
             as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-            qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            qd_height, created_at, updated_at
+            qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
+            qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
@@ -820,12 +872,16 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
             source.get("qd_islanding_time", ""),
             source.get("qd_deposition", ""),
             source.get("reconstruction_temp", ""),
+            source.get("qd_growth_temp_offset", ""),
             source.get("qd_growth_temp", ""),
             source.get("growth_rate", ""),
             source.get("qd_density", ""),
             source.get("qd_volume", ""),
             source.get("qd_volume_cv", ""),
             source.get("qd_height", ""),
+            source.get("pl_peak_nm", ""),
+            source.get("pl_fwhm_nm", ""),
+            source.get("pl_intensity", ""),
             now,
             now,
         ),
@@ -888,8 +944,9 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
             UPDATE wafer SET
                 size = ?, structure_name = ?, growth_date = ?, notes = ?, wafer_type = ?,
                 as_beam_ratio = ?, qd_islanding_time = ?, qd_deposition = ?,
-                reconstruction_temp = ?, qd_growth_temp = ?, growth_rate = ?,
-                qd_density = ?, qd_volume = ?, qd_volume_cv = ?, qd_height = ?, updated_at = ?
+                reconstruction_temp = ?, qd_growth_temp_offset = ?, qd_growth_temp = ?, growth_rate = ?,
+                qd_density = ?, qd_volume = ?, qd_volume_cv = ?, qd_height = ?,
+                pl_peak_nm = ?, pl_fwhm_nm = ?, pl_intensity = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -902,12 +959,20 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 clean_text(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_deposition")),
                 clean_text(wafer_data.get("reconstruction_temp")),
-                clean_text(wafer_data.get("qd_growth_temp")),
+                clean_text(wafer_data.get("qd_growth_temp_offset")),
+                computed_qd_growth_temp(
+                    wafer_data.get("reconstruction_temp"),
+                    wafer_data.get("qd_growth_temp_offset"),
+                    wafer_data.get("qd_growth_temp"),
+                ),
                 computed_growth_rate(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_density")),
                 clean_text(wafer_data.get("qd_volume")),
                 clean_text(wafer_data.get("qd_volume_cv")),
                 clean_text(wafer_data.get("qd_height")),
+                clean_text(wafer_data.get("pl_peak_nm")),
+                clean_text(wafer_data.get("pl_fwhm_nm")),
+                clean_text(wafer_data.get("pl_intensity")),
                 now,
                 wafer_id,
             ),
@@ -919,10 +984,10 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
             INSERT INTO wafer (
                 wafer_code, size, structure_name, growth_date, notes, wafer_type,
                 as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
-                qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-                qd_height, created_at, updated_at
+                qd_growth_temp_offset, qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
+                qd_height, pl_peak_nm, pl_fwhm_nm, pl_intensity, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code,
@@ -935,12 +1000,20 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 clean_text(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_deposition")),
                 clean_text(wafer_data.get("reconstruction_temp")),
-                clean_text(wafer_data.get("qd_growth_temp")),
+                clean_text(wafer_data.get("qd_growth_temp_offset")),
+                computed_qd_growth_temp(
+                    wafer_data.get("reconstruction_temp"),
+                    wafer_data.get("qd_growth_temp_offset"),
+                    wafer_data.get("qd_growth_temp"),
+                ),
                 computed_growth_rate(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_density")),
                 clean_text(wafer_data.get("qd_volume")),
                 clean_text(wafer_data.get("qd_volume_cv")),
                 clean_text(wafer_data.get("qd_height")),
+                clean_text(wafer_data.get("pl_peak_nm")),
+                clean_text(wafer_data.get("pl_fwhm_nm")),
+                clean_text(wafer_data.get("pl_intensity")),
                 now,
                 now,
             ),
