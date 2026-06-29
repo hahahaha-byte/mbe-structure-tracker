@@ -61,33 +61,36 @@
             <span>As 压束流比</span>
             <input data-wafer-field="as_beam_ratio" id="asBeamRatio" />
           </label>
-          <label>
-            <span>QD 成岛时间</span>
-            <input data-wafer-field="qd_islanding_time" id="qdIslandingTime" />
+          <label class="paired-field">
+            <span>QD 成岛时间（s）/ 生长速率（ML/S）</span>
+            <div class="paired-inputs">
+              <input data-wafer-field="qd_islanding_time" id="qdIslandingTime" placeholder="成岛时间" />
+              <input data-wafer-field="growth_rate" id="growthRate" placeholder="自动计算" readonly />
+            </div>
           </label>
           <label>
-            <span>QD 淀积量</span>
+            <span>QD 淀积量（成岛时间倍数）</span>
             <input data-wafer-field="qd_deposition" id="qdDeposition" />
           </label>
           <label>
-            <span>再构转变温度</span>
+            <span>再构转变温度（°C）</span>
             <input data-wafer-field="reconstruction_temp" id="reconstructionTemp" />
           </label>
           <label>
-            <span>QD 生长温度</span>
+            <span>QD 生长温度（°C）</span>
             <input data-wafer-field="qd_growth_temp" id="qdGrowthTemp" />
           </label>
           <label>
-            <span>生长速率</span>
-            <input data-wafer-field="growth_rate" id="growthRate" />
-          </label>
-          <label>
-            <span>QD 密度</span>
+            <span>QD 密度（cm<sup>-2</sup>）</span>
             <input data-wafer-field="qd_density" id="qdDensity" />
           </label>
           <label>
-            <span>QD 体积</span>
+            <span>QD 体积中位数（nm<sup>3</sup>）</span>
             <input data-wafer-field="qd_volume" id="qdVolume" />
+          </label>
+          <label>
+            <span>QD 高度（nm）</span>
+            <input data-wafer-field="qd_height" id="qdHeight" />
           </label>
           <label>
             <span>QD 体积 CV</span>

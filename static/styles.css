@@ -85,6 +85,11 @@ select:focus {
   border-color: var(--accent);
 }
 
+input[readonly] {
+  background: var(--panel-muted);
+  color: var(--muted);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(680px, 1fr) 430px;
@@ -279,6 +284,17 @@ select:focus {
 .wafer-header label span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.wafer-header label span sup {
+  font-size: 9px;
+  line-height: 0;
+}
+
+.paired-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
 }
 
 .wafer-header .wide {

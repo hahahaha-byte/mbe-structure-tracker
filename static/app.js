@@ -43,7 +43,8 @@ const TEST_WAFER_FIELDS = [
   "growth_rate",
   "qd_density",
   "qd_volume",
-  "qd_volume_cv"
+  "qd_volume_cv",
+  "qd_height"
 ];
 
 const els = {};
@@ -88,7 +89,8 @@ function bindElements() {
     growth_rate: document.getElementById("growthRate"),
     qd_density: document.getElementById("qdDensity"),
     qd_volume: document.getElementById("qdVolume"),
-    qd_volume_cv: document.getElementById("qdVolumeCv")
+    qd_volume_cv: document.getElementById("qdVolumeCv"),
+    qd_height: document.getElementById("qdHeight")
   };
 }
 
@@ -232,7 +234,7 @@ function waferCardMeta(wafer) {
     ["成岛", wafer.qd_islanding_time],
     ["淀积", wafer.qd_deposition],
     ["密度", wafer.qd_density],
-    ["速率", wafer.growth_rate]
+    ["速率", computedGrowthRate(wafer.qd_islanding_time)]
   ]
     .filter(([, value]) => String(value || "").trim())
     .map(([label, value]) => `${label} ${value}`);
@@ -242,6 +244,9 @@ function waferCardMeta(wafer) {
 function renderCurrent() {
   const wafer = state.current;
   const testWafer = normalizeWaferType(wafer?.wafer_type) === "test";
+  if (wafer) {
+    wafer.growth_rate = computedGrowthRate(wafer.qd_islanding_time);
+  }
   els.testWaferFields.hidden = !testWafer;
   Object.entries(els.waferFields).forEach(([field, input]) => {
     input.value = wafer?.[field] || "";
@@ -612,6 +617,12 @@ function handleWaferInput(event) {
   const field = event.target.dataset.waferField;
   const waferId = state.current.id;
   state.current[field] = event.target.value;
+  if (field === "qd_islanding_time") {
+    state.current.growth_rate = computedGrowthRate(event.target.value);
+    if (els.waferFields.growth_rate) {
+      els.waferFields.growth_rate.value = state.current.growth_rate;
+    }
+  }
   clearTimeout(state.waferSaveTimer);
   state.waferSaveTimer = setTimeout(async () => {
     try {
@@ -1122,13 +1133,14 @@ function csvForWafers(wafers) {
     "size",
     "structure_name",
     "as_beam_ratio",
-    "qd_islanding_time",
-    "qd_deposition",
-    "reconstruction_temp",
-    "qd_growth_temp",
-    "growth_rate",
-    "qd_density",
-    "qd_volume",
+    "qd_islanding_time_s",
+    "qd_deposition_islanding_time_multiple",
+    "reconstruction_temp_c",
+    "qd_growth_temp_c",
+    "growth_rate_ml_per_s",
+    "qd_density_cm-2",
+    "qd_volume_median_nm3",
+    "qd_height_nm",
     "qd_volume_cv",
     "path",
     "type",
@@ -1187,9 +1199,10 @@ function waferCsvPrefix(wafer) {
     wafer.qd_deposition,
     wafer.reconstruction_temp,
     wafer.qd_growth_temp,
-    wafer.growth_rate,
+    computedGrowthRate(wafer.qd_islanding_time),
     wafer.qd_density,
     wafer.qd_volume,
+    wafer.qd_height,
     wafer.qd_volume_cv
   ];
 }
@@ -2174,6 +2187,14 @@ function normalizeWaferType(value) {
   return String(value || "").trim().toLowerCase() === "test" ? "test" : "formal";
 }
 
+function computedGrowthRate(value) {
+  const match = String(value || "").match(/-?\d+(?:\.\d+)?/);
+  if (!match) return "";
+  const seconds = Number(match[0]);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return (1.7 / seconds).toFixed(3);
+}
+
 function loadShortcuts() {
   try {
     state.shortcuts = JSON.parse(localStorage.getItem("mbe-shortcuts") || "null") || DEFAULT_SHORTCUTS;
@@ -2397,16 +2418,20 @@ function shortcutToTree(shortcut) {
 }
 
 function pickWaferFields(wafer) {
+  const growthRate = computedGrowthRate(wafer.qd_islanding_time);
   const payload = {
     wafer_code: wafer.wafer_code,
     size: wafer.size,
     structure_name: wafer.structure_name,
     growth_date: wafer.growth_date,
     notes: wafer.notes,
-    wafer_type: normalizeWaferType(wafer.wafer_type)
+    wafer_type: normalizeWaferType(wafer.wafer_type),
+    growth_rate: growthRate
   };
   TEST_WAFER_FIELDS.forEach((field) => {
-    payload[field] = wafer[field] || "";
+    if (field !== "growth_rate") {
+      payload[field] = wafer[field] || "";
+    }
   });
   return payload;
 }

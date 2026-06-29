@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,7 @@ WAFER_FIELDS = (
     "qd_density",
     "qd_volume",
     "qd_volume_cv",
+    "qd_height",
 )
 TEST_WAFER_FIELDS = (
     "as_beam_ratio",
@@ -57,6 +59,7 @@ TEST_WAFER_FIELDS = (
     "qd_density",
     "qd_volume",
     "qd_volume_cv",
+    "qd_height",
 )
 
 
@@ -103,6 +106,7 @@ def init_db(db_path: Path | str) -> None:
                 qd_density TEXT DEFAULT '',
                 qd_volume TEXT DEFAULT '',
                 qd_volume_cv TEXT DEFAULT '',
+                qd_height TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -153,6 +157,7 @@ def init_db(db_path: Path | str) -> None:
         ensure_column(conn, "wafer", "qd_density", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_volume", "TEXT DEFAULT ''")
         ensure_column(conn, "wafer", "qd_volume_cv", "TEXT DEFAULT ''")
+        ensure_column(conn, "wafer", "qd_height", "TEXT DEFAULT ''")
         if should_seed_sample:
             seed_sample_data(conn)
 
@@ -238,6 +243,19 @@ def normalize_wafer_type(value: Any) -> str:
     return text if text in WAFER_TYPES else "formal"
 
 
+def computed_growth_rate(value: Any) -> str:
+    text = clean_text(value)
+    if not text:
+        return ""
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return ""
+    seconds = clean_float(match.group(0))
+    if not seconds or seconds <= 0:
+        return ""
+    return f"{1.7 / seconds:.3f}"
+
+
 def normalize_item_payload(data: Dict[str, Any], existing: Dict[str, Any] | None = None) -> Dict[str, Any]:
     base = dict(existing or {})
     qd_requested = bool(clean_int(data.get("is_quantum_dot", base.get("is_quantum_dot"))))
@@ -283,9 +301,10 @@ def list_wafers(conn: sqlite3.Connection, search: str = "", wafer_type: str = ""
                 OR COALESCE(w.qd_density, '') LIKE ?
                 OR COALESCE(w.qd_volume, '') LIKE ?
                 OR COALESCE(w.qd_volume_cv, '') LIKE ?
+                OR COALESCE(w.qd_height, '') LIKE ?
             )"""
         )
-        params.extend([like, like, like, like, like, like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like, like, like, like, like, like])
     where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
     rows = conn.execute(
         f"""
@@ -335,9 +354,9 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
             wafer_code, size, structure_name, growth_date, notes, wafer_type,
             as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
             qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            created_at, updated_at
+            qd_height, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
@@ -351,10 +370,11 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
             clean_text(data.get("qd_deposition")),
             clean_text(data.get("reconstruction_temp")),
             clean_text(data.get("qd_growth_temp")),
-            clean_text(data.get("growth_rate")),
+            computed_growth_rate(data.get("qd_islanding_time")),
             clean_text(data.get("qd_density")),
             clean_text(data.get("qd_volume")),
             clean_text(data.get("qd_volume_cv")),
+            clean_text(data.get("qd_height")),
             now,
             now,
         ),
@@ -364,6 +384,8 @@ def create_wafer(conn: sqlite3.Connection, data: Dict[str, Any]) -> Dict[str, An
 
 
 def update_wafer(conn: sqlite3.Connection, wafer_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    if "qd_islanding_time" in data:
+        data = {**data, "growth_rate": computed_growth_rate(data.get("qd_islanding_time"))}
     updates = []
     params: List[Any] = []
     for field in WAFER_FIELDS:
@@ -783,9 +805,9 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
             wafer_code, size, structure_name, growth_date, notes, wafer_type,
             as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
             qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-            created_at, updated_at
+            qd_height, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             code,
@@ -803,6 +825,7 @@ def duplicate_wafer(conn: sqlite3.Connection, wafer_id: int, new_code: str | Non
             source.get("qd_density", ""),
             source.get("qd_volume", ""),
             source.get("qd_volume_cv", ""),
+            source.get("qd_height", ""),
             now,
             now,
         ),
@@ -866,7 +889,7 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 size = ?, structure_name = ?, growth_date = ?, notes = ?, wafer_type = ?,
                 as_beam_ratio = ?, qd_islanding_time = ?, qd_deposition = ?,
                 reconstruction_temp = ?, qd_growth_temp = ?, growth_rate = ?,
-                qd_density = ?, qd_volume = ?, qd_volume_cv = ?, updated_at = ?
+                qd_density = ?, qd_volume = ?, qd_volume_cv = ?, qd_height = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -880,10 +903,11 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 clean_text(wafer_data.get("qd_deposition")),
                 clean_text(wafer_data.get("reconstruction_temp")),
                 clean_text(wafer_data.get("qd_growth_temp")),
-                clean_text(wafer_data.get("growth_rate")),
+                computed_growth_rate(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_density")),
                 clean_text(wafer_data.get("qd_volume")),
                 clean_text(wafer_data.get("qd_volume_cv")),
+                clean_text(wafer_data.get("qd_height")),
                 now,
                 wafer_id,
             ),
@@ -896,9 +920,9 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 wafer_code, size, structure_name, growth_date, notes, wafer_type,
                 as_beam_ratio, qd_islanding_time, qd_deposition, reconstruction_temp,
                 qd_growth_temp, growth_rate, qd_density, qd_volume, qd_volume_cv,
-                created_at, updated_at
+                qd_height, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 code,
@@ -912,10 +936,11 @@ def import_json_wafer(conn: sqlite3.Connection, wafer_data: Dict[str, Any], conf
                 clean_text(wafer_data.get("qd_deposition")),
                 clean_text(wafer_data.get("reconstruction_temp")),
                 clean_text(wafer_data.get("qd_growth_temp")),
-                clean_text(wafer_data.get("growth_rate")),
+                computed_growth_rate(wafer_data.get("qd_islanding_time")),
                 clean_text(wafer_data.get("qd_density")),
                 clean_text(wafer_data.get("qd_volume")),
                 clean_text(wafer_data.get("qd_volume_cv")),
+                clean_text(wafer_data.get("qd_height")),
                 now,
                 now,
             ),
