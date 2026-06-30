@@ -1810,7 +1810,7 @@ function buildMachineDailyRows(wafers) {
     "As bulk温度", "备注"
   ]];
   wafers
-    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "")
+    .filter((wafer) => machineRecordTypeForExport(wafer) === "")
     .forEach((wafer) => {
       rows.push([
         wafer.wafer_code, "", "日常概要", "", "", "", "", "",
@@ -1846,28 +1846,66 @@ function appendMachineCategorizedRows(rows, wafer, map, parentId, prefix, sectio
 }
 
 function buildMachineOpenChamberRows(wafers) {
-  const rows = [["日期编号", "备注"]];
+  const rows = [[
+    "日期编号", "路径", "参数类别", "名称", "生长材料", "束流(Torr)",
+    "Value/测速", "温度/生长速率", "待机真空度", "As压充盈真空度",
+    "As bulk温度", "行备注", "开腔备注"
+  ]];
   wafers
-    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "open_chamber")
+    .filter((wafer) => machineRecordTypeForExport(wafer) === "open_chamber")
     .forEach((wafer) => {
-      rows.push([wafer.wafer_code, wafer.notes]);
+      rows.push([
+        wafer.wafer_code, "", "开腔概要", "", "", "", "", "",
+        wafer.standby_vacuum, wafer.as_pressure_fill_vacuum, wafer.as_bulk_temp, "", wafer.notes
+      ]);
+      const map = childMapForItems(wafer.items || []);
+      appendMachineDetailRows(rows, wafer, map, null, "", DEFAULT_SECTION, "源炉", wafer.notes);
+      appendMachineDetailRows(rows, wafer, map, null, "", AS_PRESSURE_SECTION, "As压", wafer.notes);
     });
   return rows;
 }
 
 function buildMachineSpeedTestRows(wafers) {
-  const rows = [["日期编号", "路径", "源炉", "束流(Torr)", "温度", "测速", "备注", "记录备注"]];
+  const rows = [[
+    "日期编号", "路径", "源炉", "束流(Torr)", "温度", "测速",
+    "行备注", "待机真空度", "As压充盈真空度", "As bulk温度", "记录备注"
+  ]];
   wafers
-    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "speed_test")
+    .filter((wafer) => machineRecordTypeForExport(wafer) === "speed_test")
     .forEach((wafer) => {
       const map = childMapForItems(wafer.items || []);
       const beforeLength = rows.length;
       appendMachineSpeedRows(rows, wafer, map, null, "");
       if (rows.length === beforeLength) {
-        rows.push([wafer.wafer_code, "", "", "", "", "", "", wafer.notes]);
+        rows.push([
+          wafer.wafer_code, "", "", "", "", "", "",
+          wafer.standby_vacuum, wafer.as_pressure_fill_vacuum, wafer.as_bulk_temp, wafer.notes
+        ]);
       }
     });
   return rows;
+}
+
+function appendMachineDetailRows(rows, wafer, map, parentId, prefix, section, label, recordNote) {
+  (map.get(parentId) || [])
+    .filter((item) => parentId !== null || itemSection(item) === section)
+    .forEach((item, index) => {
+      const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+      if (section === AS_PRESSURE_SECTION) {
+        rows.push([
+          wafer.wafer_code, path, label, item.layer_name, item.material,
+          blankNumber(item.thickness_nm), item.doping, item.growth_temp,
+          "", "", "", item.notes, recordNote
+        ]);
+      } else {
+        rows.push([
+          wafer.wafer_code, path, label, item.layer_name, "",
+          blankNumber(item.thickness_nm), item.doping, item.growth_temp,
+          "", "", "", item.notes, recordNote
+        ]);
+      }
+      appendMachineDetailRows(rows, wafer, map, item.id, path, section, label, recordNote);
+    });
 }
 
 function appendMachineSpeedRows(rows, wafer, map, parentId, prefix) {
@@ -1883,6 +1921,9 @@ function appendMachineSpeedRows(rows, wafer, map, parentId, prefix) {
         item.growth_temp,
         item.doping,
         item.notes,
+        wafer.standby_vacuum,
+        wafer.as_pressure_fill_vacuum,
+        wafer.as_bulk_temp,
         wafer.notes
       ]);
       appendMachineSpeedRows(rows, wafer, map, item.id, path);
@@ -3196,6 +3237,15 @@ function normalizeMachineRecordType(value) {
 
 function machineRecordTypeLabel(value) {
   return MACHINE_RECORD_TYPES[normalizeMachineRecordType(value)] || "日常";
+}
+
+function machineRecordTypeForExport(wafer) {
+  const explicit = normalizeMachineRecordType(wafer?.machine_record_type);
+  if (explicit) return explicit;
+  const code = String(wafer?.wafer_code || "").trim();
+  if (/开腔$/u.test(code)) return "open_chamber";
+  if (/测速$/u.test(code)) return "speed_test";
+  return "";
 }
 
 function isMachineSpeedTestRecord() {
