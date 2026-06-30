@@ -1418,11 +1418,15 @@ async function exportGlobalBackup() {
     const dateCode = currentShortDateCode();
     const folder = `备份${dateCode}/`;
     const formalWafers = wafers.filter((wafer) => normalizeWaferType(wafer.wafer_type) === "formal");
+    const testWafers = wafers.filter((wafer) => normalizeWaferType(wafer.wafer_type) === "test");
+    const machineWafers = wafers.filter((wafer) => normalizeWaferType(wafer.wafer_type) === "machine");
     const entries = [
       { name: `${folder}全部数据.json`, data: utf8Bytes(JSON.stringify({ wafers }, null, 2)) },
       { name: `${folder}全部记录.csv`, data: utf8Bytes(csvForWafers(wafers)) },
       { name: `${folder}全部记录.xlsx`, data: buildAllRecordsXlsx(wafers) },
-      { name: `${folder}正式片概要.xlsx`, data: buildFormalSummaryXlsx(formalWafers) }
+      { name: `${folder}正式片.xlsx`, data: buildFormalBackupXlsx(formalWafers) },
+      { name: `${folder}测试片.xlsx`, data: buildTestBackupXlsx(testWafers) },
+      { name: `${folder}MBE参数.xlsx`, data: buildMachineBackupXlsx(machineWafers) }
     ];
     if (formalWafers.length) {
       const pdfBlob = await buildWafersPdfBlob(formalWafers);
@@ -1669,7 +1673,29 @@ function appendMachineRows(rows, wafer, map, parentId, prefix, section) {
     });
 }
 
-function buildFormalSummaryXlsx(wafers) {
+function buildFormalBackupXlsx(wafers) {
+  return xlsxBytes([
+    ["概要", buildFormalSummaryRows(wafers)],
+    ["详细信息", buildStructureDetailRows(wafers)]
+  ]);
+}
+
+function buildTestBackupXlsx(wafers) {
+  return xlsxBytes([
+    ["测试参数", buildTestParameterRows(wafers)],
+    ["结构信息", buildStructureDetailRows(wafers)]
+  ]);
+}
+
+function buildMachineBackupXlsx(wafers) {
+  return xlsxBytes([
+    ["日常参数", buildMachineDailyRows(wafers)],
+    ["源炉开腔备注", buildMachineOpenChamberRows(wafers)],
+    ["测速数据", buildMachineSpeedTestRows(wafers)]
+  ]);
+}
+
+function buildFormalSummaryRows(wafers) {
   const rows = [[
     "片号", "结构名称", "尺寸", "日期", "样品托编号", "总厚度(nm)", "量子点层数",
     "有源区掺杂方式", "有源区掺杂详情", "盖层厚度(nm)", "备注"
@@ -1691,7 +1717,176 @@ function buildFormalSummaryXlsx(wafers) {
       wafer.notes
     ]);
   });
-  return xlsxBytes([["正式片概要", rows]]);
+  return rows;
+}
+
+function buildStructureDetailRows(wafers) {
+  const rows = [[
+    "编号", "结构名称", "尺寸", "日期", "样品托编号", "路径", "层级", "行类型",
+    "层名", "材料", "厚度/QD ML", "周期", "单周期(nm)", "掺杂浓度", "N/P",
+    "生长温度", "QD", "备注"
+  ]];
+  wafers.forEach((wafer) => {
+    const map = childMapForItems(wafer.items || []);
+    const roots = map.get(null) || [];
+    if (!roots.length) {
+      rows.push([
+        wafer.wafer_code, wafer.structure_name, wafer.size, wafer.growth_date,
+        wafer.sample_holder_code, "", "", "", "", "", "", "", "", "", "", "", "", wafer.notes
+      ]);
+      return;
+    }
+    appendStructureDetailRows(rows, wafer, map, null, "", 0);
+  });
+  return rows;
+}
+
+function appendStructureDetailRows(rows, wafer, map, parentId, prefix, depth) {
+  (map.get(parentId) || []).forEach((item, index) => {
+    const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+    rows.push([
+      wafer.wafer_code,
+      wafer.structure_name,
+      wafer.size,
+      wafer.growth_date,
+      wafer.sample_holder_code,
+      path,
+      depth,
+      item.item_type,
+      item.layer_name,
+      item.material,
+      isQuantumDot(item) ? qdGrowthText(item) : blankNumber(item.thickness_nm),
+      blankNumber(item.periods),
+      blankNumber(item.single_period_thickness_nm),
+      item.doping,
+      item.doping_type,
+      item.growth_temp,
+      item.is_quantum_dot ? "是" : "",
+      item.notes
+    ]);
+    appendStructureDetailRows(rows, wafer, map, item.id, path, depth + 1);
+  });
+}
+
+function buildTestParameterRows(wafers) {
+  const rows = [[
+    "片号", "尺寸", "结构名称", "日期", "样品托编号", "As压束流比",
+    "QD成岛时间(s)", "生长速率(ML/S)", "QD淀积量(成岛时间倍数)", "再构温度(°C)",
+    "QD生长相对温度(°C)", "QD生长实际温度(°C)", "QD密度(cm-2)",
+    "QD体积中位数(nm3)", "QD高度(nm)", "QD体积CV", "PL峰位(nm)",
+    "FWHM(nm)", "PL强度", "备注"
+  ]];
+  wafers.forEach((wafer) => {
+    rows.push([
+      wafer.wafer_code,
+      wafer.size,
+      wafer.structure_name,
+      wafer.growth_date,
+      wafer.sample_holder_code,
+      wafer.as_beam_ratio,
+      wafer.qd_islanding_time,
+      computedGrowthRate(wafer.qd_islanding_time),
+      wafer.qd_deposition,
+      wafer.reconstruction_temp,
+      wafer.qd_growth_temp_offset,
+      computedQdGrowthTemp(wafer.reconstruction_temp, wafer.qd_growth_temp_offset, wafer.qd_growth_temp),
+      wafer.qd_density,
+      wafer.qd_volume,
+      wafer.qd_height,
+      wafer.qd_volume_cv,
+      wafer.pl_peak_nm,
+      wafer.pl_fwhm_nm,
+      wafer.pl_intensity,
+      wafer.notes
+    ]);
+  });
+  return rows;
+}
+
+function buildMachineDailyRows(wafers) {
+  const rows = [[
+    "日期编号", "路径", "参数类别", "名称", "生长材料", "束流(Torr)",
+    "Value/测速", "温度/生长速率", "待机真空度", "As压充盈真空度",
+    "As bulk温度", "备注"
+  ]];
+  wafers
+    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "")
+    .forEach((wafer) => {
+      rows.push([
+        wafer.wafer_code, "", "日常概要", "", "", "", "", "",
+        wafer.standby_vacuum, wafer.as_pressure_fill_vacuum, wafer.as_bulk_temp, wafer.notes
+      ]);
+      const map = childMapForItems(wafer.items || []);
+      appendMachineCategorizedRows(rows, wafer, map, null, "", DEFAULT_SECTION, "源炉");
+      appendMachineCategorizedRows(rows, wafer, map, null, "", AS_PRESSURE_SECTION, "As压");
+    });
+  return rows;
+}
+
+function appendMachineCategorizedRows(rows, wafer, map, parentId, prefix, section, label) {
+  (map.get(parentId) || [])
+    .filter((item) => parentId !== null || itemSection(item) === section)
+    .forEach((item, index) => {
+      const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+      if (section === AS_PRESSURE_SECTION) {
+        rows.push([
+          wafer.wafer_code, path, label, item.layer_name, item.material,
+          blankNumber(item.thickness_nm), item.doping, item.growth_temp,
+          "", "", "", item.notes
+        ]);
+      } else {
+        rows.push([
+          wafer.wafer_code, path, label, item.layer_name, "",
+          blankNumber(item.thickness_nm), item.doping, item.growth_temp,
+          "", "", "", item.notes
+        ]);
+      }
+      appendMachineCategorizedRows(rows, wafer, map, item.id, path, section, label);
+    });
+}
+
+function buildMachineOpenChamberRows(wafers) {
+  const rows = [["日期编号", "备注"]];
+  wafers
+    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "open_chamber")
+    .forEach((wafer) => {
+      rows.push([wafer.wafer_code, wafer.notes]);
+    });
+  return rows;
+}
+
+function buildMachineSpeedTestRows(wafers) {
+  const rows = [["日期编号", "路径", "源炉", "束流(Torr)", "温度", "测速", "备注", "记录备注"]];
+  wafers
+    .filter((wafer) => normalizeMachineRecordType(wafer.machine_record_type) === "speed_test")
+    .forEach((wafer) => {
+      const map = childMapForItems(wafer.items || []);
+      const beforeLength = rows.length;
+      appendMachineSpeedRows(rows, wafer, map, null, "");
+      if (rows.length === beforeLength) {
+        rows.push([wafer.wafer_code, "", "", "", "", "", "", wafer.notes]);
+      }
+    });
+  return rows;
+}
+
+function appendMachineSpeedRows(rows, wafer, map, parentId, prefix) {
+  (map.get(parentId) || [])
+    .filter((item) => parentId !== null || itemSection(item) === DEFAULT_SECTION)
+    .forEach((item, index) => {
+      const path = prefix ? `${prefix}.${index + 1}` : String(index + 1);
+      rows.push([
+        wafer.wafer_code,
+        path,
+        item.layer_name,
+        blankNumber(item.thickness_nm),
+        item.growth_temp,
+        item.doping,
+        item.notes,
+        wafer.notes
+      ]);
+      appendMachineSpeedRows(rows, wafer, map, item.id, path);
+    });
 }
 
 function computeStatsForItems(items) {
