@@ -340,9 +340,9 @@ def write_csv_items(
                 item.get("section", "source"),
                 item["layer_name"],
                 item["material"],
-                item["thickness_nm"] or "",
+                compact_csv_number(item["thickness_nm"]),
                 item["periods"] or "",
-                item["single_period_thickness_nm"] or "",
+                compact_csv_number(item["single_period_thickness_nm"]),
                 item["doping"],
                 item.get("doping_type", ""),
                 item["growth_temp"],
@@ -385,6 +385,21 @@ def wafer_csv_prefix(wafer: Dict[str, Any]) -> list[Any]:
         wafer.get("as_pressure_fill_vacuum", ""),
         wafer.get("as_bulk_temp", ""),
     ]
+
+
+def compact_csv_number(value: Any) -> Any:
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, (int, float)):
+        return value
+    if value == 0:
+        return "0"
+    if abs(value) < 0.001:
+        mantissa, exponent = f"{value:.8e}".split("e")
+        mantissa = mantissa.rstrip("0").rstrip(".")
+        exponent = str(int(exponent))
+        return f"{mantissa}e{exponent}"
+    return int(value) if isinstance(value, float) and value.is_integer() else value
 
 
 def run_server(args: argparse.Namespace) -> None:

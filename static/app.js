@@ -3650,7 +3650,26 @@ function isNumericText(value) {
 }
 
 function blankNumber(value) {
-  return value === null || value === undefined ? "" : String(value);
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") return compactNumericText(value);
+  const text = String(value);
+  const numeric = Number(text.replace(/,/g, ""));
+  return Number.isFinite(numeric) && Math.abs(numeric) > 0 && Math.abs(numeric) < 0.001
+    ? compactNumericText(numeric)
+    : text;
+}
+
+function compactNumericText(value) {
+  if (!Number.isFinite(value)) return "";
+  if (value === 0) return "0";
+  if (Math.abs(value) < 0.001) {
+    return value.toExponential(8)
+      .replace(/(\.\d*?[1-9])0+e/u, "$1e")
+      .replace(/\.0+e/u, "e")
+      .replace(/e\+/u, "e")
+      .replace(/e(-?)0+/u, "e$1");
+  }
+  return Number.isInteger(value) ? String(value) : String(value);
 }
 
 function formatNumber(value) {
